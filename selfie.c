@@ -580,7 +580,19 @@ void resetParser() {
 
 void emitLeftShiftBy(int reg, int b);
 void emitMainEntry();
+void createELFHeader();
+void createELFSectionHeader(int start, int name, int type, int flags, int addr, int off, int size, int link, int info, int align, int entsize);
+void createELFProgramHeader(int start, int type, int offset, int vaddr, int paddr, int fsize, int memsize, int flags, int align);
 void bootstrapCode();
+
+// ------------------------ GLOBAL CONSTANTS -----------------------
+
+int ELF_HEADER_LEN    = 352;   // = 87 * 4 Bytes (87 = 13(Elfheader) + 2*8(Programmheader) + 5*10(Sektionsheader) + 8(Stringtabelle) 
+int ELF_ENTRY_POINT   = 65536; // = 0x10000
+
+// ------------------------ GLOBAL VARIABLES -----------------------
+
+int *ELF_header;
 
 // -----------------------------------------------------------------
 // --------------------------- COMPILER ----------------------------
@@ -811,6 +823,8 @@ int maxBinaryLength = 262144; // 256KB
 int* binary = (int*) 0; // binary of emitted instructions
 
 int binaryLength = 0; // length of binary in bytes incl. globals & strings
+
+int binaryCurAdr = 0; //tracks current address in respect to ELF Header
 
 int codeLength = 0; // length of code portion of binary in bytes
 
@@ -2878,7 +2892,7 @@ int help_call_codegen(int* entry, int* procedure) {
     // default return type is "int"
     type = INT_T;
 
-    createSymbolTableEntry(GLOBAL_TABLE, procedure, lineNumber, PROCEDURE, type, 0, binaryLength);
+    createSymbolTableEntry(GLOBAL_TABLE, procedure, lineNumber, PROCEDURE, type, 0, binaryCurAdr);
 
     emitJFormat(OP_JAL, 0);
 
@@ -2887,7 +2901,7 @@ int help_call_codegen(int* entry, int* procedure) {
 
     if (getAddress(entry) == 0) {
       // procedure declared but never called nor defined
-      setAddress(entry, binaryLength);
+      setAddress(entry, binaryCurAdr);
 
       emitJFormat(OP_JAL, 0);
     } else if (getOpcode(loadBinary(getAddress(entry))) == OP_JAL) {
@@ -2895,7 +2909,7 @@ int help_call_codegen(int* entry, int* procedure) {
 
       // create fixup chain
       emitJFormat(OP_JAL, getAddress(entry) / WORDSIZE);
-      setAddress(entry, binaryLength - 2 * WORDSIZE);
+      setAddress(entry, binaryCurAdr - 2 * WORDSIZE);
     } else
       // procedure defined, use address
       emitJFormat(OP_JAL, getAddress(entry) / WORDSIZE);
@@ -3938,14 +3952,14 @@ void gr_procedure(int* procedure, int type) {
     // this is a procedure definition
     if (entry == (int*) 0)
       // procedure never called nor declared nor defined
-      createSymbolTableEntry(GLOBAL_TABLE, procedure, lineNumber, PROCEDURE, type, 0, binaryLength);
+      createSymbolTableEntry(GLOBAL_TABLE, procedure, lineNumber, PROCEDURE, type, 0, binaryCurAdr);
     else {
       // procedure already called or declared or defined
       if (getAddress(entry) != 0) {
         // procedure already called or defined
         if (getOpcode(loadBinary(getAddress(entry))) == OP_JAL) {
           // procedure already called but not defined
-          fixlink_absolute(getAddress(entry), binaryLength);
+          fixlink_absolute(getAddress(entry), binaryCurAdr);
 
           if (stringCompare(procedure, (int*) "main"))
             // first source containing main procedure provides binary name
@@ -3963,7 +3977,7 @@ void gr_procedure(int* procedure, int type) {
           typeWarning(getType(entry), type);
 
         setType(entry, type);
-        setAddress(entry, binaryLength);
+        setAddress(entry, binaryCurAdr);
       } else {
         // procedure already defined
         printLineNumber((int*) "warning", lineNumber);
@@ -4009,7 +4023,7 @@ void gr_procedure(int* procedure, int type) {
       exit(EXITCODE_PARSERERROR);
     }
 
-    fixlink_absolute(returnBranches, binaryLength);
+    fixlink_absolute(returnBranches, binaryCurAdr);
 
     returnBranches = 0;
 
@@ -4151,6 +4165,106 @@ void emitMainEntry() {
   // no need to reset return register here
 }
 
+void createELFHeader() {
+  int startOfProgHeaders;
+  int startOfSecHeaders;
+  int stringBytes;
+
+  startOfProgHeaders = 52;
+  startOfSecHeaders  = 116; //84;
+  stringBytes        = 36;
+
+  // store all numbers necessary to create a valid
+  // ELF header incl. program header and section headers.
+  // For more info about specific fields, consult ELF documentation.
+  ELF_header = malloc(ELF_HEADER_LEN);
+
+  // ELF magic number
+  *(ELF_header + 0) = 1179403647; // part 1 of ELF magic number
+  *(ELF_header + 1) = 65793;      // part 2 of ELF magic number
+  *(ELF_header + 2) = 0;          // part 3 of ELF magic number
+  *(ELF_header + 3) = 0;          // part 4 of ELF magic number
+
+  // ELF Header
+  *(ELF_header + 4)  = 524290;   // Type and Machine fields (16 bit each) (524290 -> MIPS-I)
+  *(ELF_header + 5)  = 1;        // Version number
+  *(ELF_header + 6)  = ELF_ENTRY_POINT + 352;
+  *(ELF_header + 7)  = startOfProgHeaders;
+  *(ELF_header + 8)  = startOfSecHeaders;
+  *(ELF_header + 9)  = 268439559;// Flags
+  *(ELF_header + 10) = 2097204;  // Size of ELF header and size of program header
+  *(ELF_header + 11) = 2621442; //2621441;  // # of program headers (2) and size of section header (40 Bytes)
+  *(ELF_header + 12) = 262149;  //196612;   // # of section headers (5) and section header string table index (4)
+
+  // Program Header
+  //createELFProgramHeader(13,1879048195, ELF_HEADER_LEN+4, ELF_ENTRY_POINT, 
+  //                       0, 0, 0, 4, 4);
+  createELFProgramHeader(13, 0, 0, 0, 0, 0, 0, 0, 0);
+  
+  createELFProgramHeader(21,1, 0, ELF_ENTRY_POINT, 
+                         0, binaryLength, binaryLength, 5, 65536); 
+
+  // Section Header 0 (Zero-Header)
+  createELFSectionHeader(29, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+
+  // Section Header 1 (.reginfo)
+  //createELFSectionHeader(39, 23, 1879048198, 2,  ELF_ENTRY_POINT,
+  //  ELF_HEADER_LEN + 4, 0, 0,  0, 0, 0);
+  createELFSectionHeader(39, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+  // Section Header 2 (.text)
+  createELFSectionHeader(49, 1, 1, 6,  ELF_ENTRY_POINT + 352,
+    ELF_HEADER_LEN, codeLength, 0,  0, 16, 0);
+
+  // Section Header 3 (.data)
+  //createELFSectionHeader(59, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+  createELFSectionHeader(59, 7, 1, 3, ELF_ENTRY_POINT + 4 + codeLength,
+    ELF_HEADER_LEN + 4 + codeLength, binaryLength - codeLength, 0, 0, 16, 0);
+
+  // Section Header 4 (.shstrtab)
+  createELFSectionHeader(69, 13, 3, 0, 0, ELF_HEADER_LEN - stringBytes,
+    stringBytes, 0, 0, 4, 0);
+  
+  // String table
+  *(ELF_header + 79) = 1702112768;  // 0.te
+  *(ELF_header + 80) = 771781752;   // xt0.
+  *(ELF_header + 81) = 1635017060;  // data
+  *(ELF_header + 82) = 1752378880;  // 0.sh
+  *(ELF_header + 83) = 1953657971;  // strt
+  *(ELF_header + 84) = 771777121;   // ab0.  (25185)
+  *(ELF_header + 85) = 1768383858;  // regi  
+  *(ELF_header + 86) = 7300718;     // nfo
+  *(ELF_header + 87) = 0;   
+
+  //.reginfo content
+  //*(ELF_header + 87) = 4127260850;
+  
+}
+
+void createELFProgramHeader(int start, int type, int offset, int vaddr, int paddr, int fsize, int memsize, int flags, int align) {
+  *(ELF_header + start)     = type;    // Type of program header (LOAD)
+  *(ELF_header + (start+1)) = offset;  // Offset to 1. byte of segment (extra 4B for binaryLength)
+  *(ELF_header + (start+2)) = vaddr;   // Virtual address
+  *(ELF_header + (start+3)) = paddr;   // Physical address
+  *(ELF_header + (start+4)) = fsize;   // File size
+  *(ELF_header + (start+5)) = memsize; // Memory size
+  *(ELF_header + (start+6)) = flags;   // Flags (Read, Write, Execute)
+  *(ELF_header + (start+7)) = align;   // Alignment of segments
+}
+
+void createELFSectionHeader(int start, int name, int type, int flags, int addr, int off, int size, int link, int info, int align, int entsize) {
+
+  *(ELF_header + start)     = name;
+  *(ELF_header + (start+1)) = type;
+  *(ELF_header + (start+2)) = flags;
+  *(ELF_header + (start+3)) = addr;
+  *(ELF_header + (start+4)) = off;
+  *(ELF_header + (start+5)) = size;
+  *(ELF_header + (start+6)) = link;
+  *(ELF_header + (start+7)) = info;
+  *(ELF_header + (start+8)) = align;
+  *(ELF_header + (start+9)) = entsize;
+}
+
 void bootstrapCode() {
   int savedBinaryLength;
 
@@ -4162,7 +4276,7 @@ void bootstrapCode() {
 
   // assert: 0 <= savedBinaryLength < 2^28 (see load_integer)
 
-  load_integer(savedBinaryLength);
+  load_integer(ELF_ENTRY_POINT + ELF_HEADER_LEN + savedBinaryLength);
 
   // load binaryLength into GP register
   emitIFormat(OP_ADDIU, currentTemporary(), REG_GP, 0);
@@ -4174,12 +4288,12 @@ void bootstrapCode() {
   // assert: 0 <= VIRTUALMEMORYSIZE - WORDSIZE < 2^28 (see load_integer)
 
   // initial stack pointer is stored at highest virtual address
-  load_integer(VIRTUALMEMORYSIZE - WORDSIZE);
+  //load_integer(VIRTUALMEMORYSIZE - WORDSIZE);
 
   // load initial stack pointer into SP register
-  emitIFormat(OP_LW, currentTemporary(), REG_SP, 0);
+  //emitIFormat(OP_LW, currentTemporary(), REG_SP, 0);
 
-  tfree(1);
+  //tfree(1);
 
   // assert: allocatedTemporaries == 0
 
@@ -4213,7 +4327,8 @@ void selfie_compile() {
   // allocate memory for storing binary
   binary       = malloc(maxBinaryLength);
   binaryLength = 0;
-
+  binaryCurAdr = ELF_HEADER_LEN + ELF_ENTRY_POINT;
+  
   // reset code length
   codeLength = 0;
 
@@ -4540,6 +4655,7 @@ void emitInstruction(int instruction) {
     *(sourceLineNumber + binaryLength / WORDSIZE) = lineNumber;
 
   binaryLength = binaryLength + WORDSIZE;
+  binaryCurAdr = binaryCurAdr + WORDSIZE;
 }
 
 void emitRFormat(int opcode, int rs, int rt, int rd, int function) {
@@ -4631,6 +4747,7 @@ void emitGlobalsStrings() {
       storeBinary(binaryLength, getValue(entry));
 
       binaryLength = binaryLength + WORDSIZE;
+      binaryCurAdr = binaryCurAdr + WORDSIZE;
     } else if (getClass(entry) == STRING)
       binaryLength = copyStringToBinary(getString(entry), binaryLength);
 
@@ -4693,9 +4810,12 @@ void selfie_output() {
   *binary_buffer = codeLength;
 
   // assert: binary_buffer is mapped
+  // first create ELF header and write to fd
+  createELFHeader();
+  write(fd, ELF_header, ELF_HEADER_LEN);
 
   // first write code length
-  write(fd, binary_buffer, WORDSIZE);
+  //write(fd, binary_buffer, WORDSIZE);
 
   // assert: binary is mapped
 
@@ -4749,7 +4869,10 @@ int* touch(int* memory, int length) {
 void selfie_load() {
   int fd;
   int numberOfReadBytes;
+  int* elfBuffer;
 
+  elfBuffer = malloc(ELF_HEADER_LEN);
+  
   binaryName = getArgument();
 
   // assert: binaryName is mapped and not longer than maxFilenameLength
@@ -4769,20 +4892,26 @@ void selfie_load() {
   binary = touch(malloc(maxBinaryLength), maxBinaryLength);
 
   binaryLength = 0;
+  binaryCurAdr = ELF_ENTRY_POINT + ELF_HEADER_LEN;
   codeLength   = 0;
 
   // no source line numbers in binaries
   sourceLineNumber = (int*) 0;
 
   // assert: binary_buffer is mapped
-
+  
+  // read ELF header first
+  numberOfReadBytes = read(fd, elfBuffer, ELF_HEADER_LEN);
+  if (numberOfReadBytes != ELF_HEADER_LEN)
+    exit(-1);
+  
   // read code length first
-  numberOfReadBytes = read(fd, binary_buffer, WORDSIZE);
+  //numberOfReadBytes = read(fd, binary_buffer, WORDSIZE);
 
-  if (numberOfReadBytes == WORDSIZE) {
-    codeLength = *binary_buffer;
+  //if (numberOfReadBytes == WORDSIZE) {
+  //  codeLength = *binary_buffer;
 
-    if (codeLength <= maxBinaryLength) {
+    //if (codeLength <= maxBinaryLength) {
       // assert: binary is mapped
 
       // now read binary including global variables and strings
@@ -4807,8 +4936,8 @@ void selfie_load() {
           return;
         }
       }
-    }
-  }
+      // }
+// }
 
   print(selfieName);
   print((int*) ": failed to load code from input file ");
@@ -4823,7 +4952,7 @@ void selfie_load() {
 // -----------------------------------------------------------------
 
 void emitExit() {
-  createSymbolTableEntry(LIBRARY_TABLE, (int*) "exit", 0, PROCEDURE, VOID_T, 0, binaryLength);
+  createSymbolTableEntry(LIBRARY_TABLE, (int*) "exit", 0, PROCEDURE, VOID_T, 0, binaryCurAdr);
 
   // load argument for exit
   emitIFormat(OP_LW, REG_SP, REG_A0, 0); // exit code
@@ -4853,7 +4982,7 @@ void implementExit(int* context) {
 }
 
 void emitRead() {
-  createSymbolTableEntry(LIBRARY_TABLE, (int*) "read", 0, PROCEDURE, INT_T, 0, binaryLength);
+  createSymbolTableEntry(LIBRARY_TABLE, (int*) "read", 0, PROCEDURE, INT_T, 0, binaryCurAdr);
 
   emitIFormat(OP_LW, REG_SP, REG_A2, 0); // size
   emitIFormat(OP_ADDIU, REG_SP, REG_SP, WORDSIZE);
@@ -4970,7 +5099,7 @@ void implementRead(int* context) {
 }
 
 void emitWrite() {
-  createSymbolTableEntry(LIBRARY_TABLE, (int*) "write", 0, PROCEDURE, INT_T, 0, binaryLength);
+  createSymbolTableEntry(LIBRARY_TABLE, (int*) "write", 0, PROCEDURE, INT_T, 0, binaryCurAdr);
 
   emitIFormat(OP_LW, REG_SP, REG_A2, 0); // size
   emitIFormat(OP_ADDIU, REG_SP, REG_SP, WORDSIZE);
@@ -5086,7 +5215,7 @@ void implementWrite(int* context) {
 }
 
 void emitOpen() {
-  createSymbolTableEntry(LIBRARY_TABLE, (int*) "open", 0, PROCEDURE, INT_T, 0, binaryLength);
+  createSymbolTableEntry(LIBRARY_TABLE, (int*) "open", 0, PROCEDURE, INT_T, 0, binaryCurAdr);
 
   emitIFormat(OP_LW, REG_SP, REG_A2, 0); // mode
   emitIFormat(OP_ADDIU, REG_SP, REG_SP, WORDSIZE);
@@ -5192,11 +5321,11 @@ void implementOpen(int* context) {
 }
 
 void emitMalloc() {
-  createSymbolTableEntry(LIBRARY_TABLE, (int*) "malloc", 0, PROCEDURE, INTSTAR_T, 0, binaryLength);
+  createSymbolTableEntry(LIBRARY_TABLE, (int*) "malloc", 0, PROCEDURE, INTSTAR_T, 0, binaryCurAdr);
 
   // on boot levels higher than zero, zalloc falls back to malloc
   // assuming that page frames are zeroed on boot level zero
-  createSymbolTableEntry(LIBRARY_TABLE, (int*) "zalloc", 0, PROCEDURE, INTSTAR_T, 0, binaryLength);
+  createSymbolTableEntry(LIBRARY_TABLE, (int*) "zalloc", 0, PROCEDURE, INTSTAR_T, 0, binaryCurAdr);
 
   emitIFormat(OP_LW, REG_SP, REG_A0, 0); // size
   emitIFormat(OP_ADDIU, REG_SP, REG_SP, WORDSIZE);
@@ -5250,7 +5379,7 @@ int implementMalloc(int* context) {
 // -----------------------------------------------------------------
 
 void emitSwitch() {
-  createSymbolTableEntry(LIBRARY_TABLE, (int*) "hypster_switch", 0, PROCEDURE, INTSTAR_T, 0, binaryLength);
+  createSymbolTableEntry(LIBRARY_TABLE, (int*) "hypster_switch", 0, PROCEDURE, INTSTAR_T, 0, binaryCurAdr);
 
   emitIFormat(OP_LW, REG_SP, REG_A1, 0); // number of instructions to execute
   emitIFormat(OP_ADDIU, REG_SP, REG_SP, WORDSIZE);
