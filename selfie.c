@@ -190,7 +190,7 @@ int* binary_buffer;    // buffer for binary I/O
 // WINDOWS: 32768 = 0x8000 = _O_BINARY (0x8000) | _O_RDONLY (0x0000)
 // since LINUX/MAC do not seem to mind about _O_BINARY set
 // we use the WINDOWS flags as default
-int O_RDONLY = 32768;
+int O_RDONLY = 0; //32768;
 
 // flags for opening write-only files
 // MAC: 1537 = 0x0601 = O_CREAT (0x0200) | O_TRUNC (0x0400) | O_WRONLY (0x0001)
@@ -2519,7 +2519,7 @@ int isUndefinedProcedure(int* entry) {
     else if (getAddress(entry) == 0)
       // procedure declared but not defined
       return 1;
-    else if (getOpcode(loadBinary(getAddress(entry))) == OP_JAL)
+    else if (getOpcode(loadBinary(getAddress(entry) - ELF_ENTRY_POINT - ELF_HEADER_LEN)) == OP_JAL)
       // procedure called but not defined
       return 1;
   }
@@ -2892,7 +2892,7 @@ int help_call_codegen(int* entry, int* procedure) {
     // default return type is "int"
     type = INT_T;
 
-    createSymbolTableEntry(GLOBAL_TABLE, procedure, lineNumber, PROCEDURE, type, 0, binaryCurAdr);
+    createSymbolTableEntry(GLOBAL_TABLE, procedure, lineNumber, PROCEDURE, type, 0, binaryLength);
 
     emitJFormat(OP_JAL, 0);
 
@@ -2901,7 +2901,7 @@ int help_call_codegen(int* entry, int* procedure) {
 
     if (getAddress(entry) == 0) {
       // procedure declared but never called nor defined
-      setAddress(entry, binaryCurAdr);
+      setAddress(entry, binaryLength);
 
       emitJFormat(OP_JAL, 0);
     } else if (getOpcode(loadBinary(getAddress(entry))) == OP_JAL) {
@@ -2909,7 +2909,7 @@ int help_call_codegen(int* entry, int* procedure) {
 
       // create fixup chain
       emitJFormat(OP_JAL, getAddress(entry) / WORDSIZE);
-      setAddress(entry, binaryCurAdr - 2 * WORDSIZE);
+      setAddress(entry, binaryLength - 2 * WORDSIZE);
     } else
       // procedure defined, use address
       emitJFormat(OP_JAL, getAddress(entry) / WORDSIZE);
@@ -3471,7 +3471,7 @@ void gr_while() {
     syntaxErrorSymbol(SYM_WHILE);
 
   // unconditional branch to beginning of while
-  emitIFormat(OP_BEQ, REG_ZR, REG_ZR, (brBackToWhile - binaryLength - WORDSIZE) / WORDSIZE);
+  emitIFormat(OP_BEQ, REG_ZR, REG_ZR, -((-(brBackToWhile - binaryLength - WORDSIZE)) / WORDSIZE));
 
   if (brForwardToEnd != 0)
     // first instruction after loop comes here
@@ -4151,6 +4151,14 @@ void emitMainEntry() {
     i = i + 1;
   }
 
+  talloc(1);
+
+  emitIFormat(OP_ADDIU, REG_SP, currentTemporary(), WORDSIZE);
+  emitIFormat(OP_ADDIU, REG_SP, REG_SP, -WORDSIZE);
+  emitIFormat(OP_SW, REG_SP, currentTemporary(), 0);
+
+  tfree(1);
+
   mainJump = binaryLength;
 
   createSymbolTableEntry(GLOBAL_TABLE, (int*) "main", 0, PROCEDURE, INT_T, 0, mainJump);
@@ -4202,7 +4210,7 @@ void createELFHeader() {
   createELFProgramHeader(13, 0, 0, 0, 0, 0, 0, 0, 0);
   
   createELFProgramHeader(21,1, 0, ELF_ENTRY_POINT, 
-                         0, binaryLength, binaryLength, 5, 65536); 
+                         0, binaryLength, binaryLength, 7, 65536); 
 
   // Section Header 0 (Zero-Header)
   createELFSectionHeader(29, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
@@ -4299,10 +4307,11 @@ void bootstrapCode() {
 
   binaryLength = savedBinaryLength;
 
-  if (reportUndefinedProcedures())
+  reportUndefinedProcedures();
+  //if (reportUndefinedProcedures())
     // rather than jump and link to the main procedure
     // exit by continuing to the next instruction (with delay slot)
-    fixup_absolute(mainJump, mainJump + 8);
+    //fixup_absolute(mainJump, ELF_ENTRY_POINT + ELF_HEADER_LEN + mainJump + 8);
 
   mainJump = 0;
 }
@@ -4314,6 +4323,7 @@ void bootstrapCode() {
 void selfie_compile() {
   int link;
   int numberOfSourceFiles;
+  int* entry;
 
   // link until next console option
   link = 1;
@@ -4437,7 +4447,21 @@ void selfie_compile() {
     print((int*) ": nothing to compile, only library generated");
     println();
   }
+////////////////////////////////////////////////////////////////////
 
+  //entry = global_symbol_table;
+
+  //while ((int) entry != 0) {
+  //	  if(getClass(entry) != STRING){
+  //		  print(getString(entry));
+  //		  print((int*) ": ");
+  //		  print(itoa(getAddress(entry), integer_buffer, 10, 0, 0));
+  //		  println();
+  //	  }
+
+  //entry = getNextEntry(entry);
+  //}
+////////////////////////////////////////////////////////////////////
   codeLength = binaryLength;
 
   emitGlobalsStrings();
@@ -5327,11 +5351,25 @@ void emitMalloc() {
   // assuming that page frames are zeroed on boot level zero
   createSymbolTableEntry(LIBRARY_TABLE, (int*) "zalloc", 0, PROCEDURE, INTSTAR_T, 0, binaryCurAdr);
 
+  emitIFormat(OP_ADDIU, REG_ZR, REG_A0, 0);
+  emitIFormat(OP_ADDIU, REG_ZR, REG_V0, SYSCALL_MALLOC);
+  emitRFormat(OP_SPECIAL, 0, 0, 0, FCT_SYSCALL);
+
+  talloc(1);
+
+  emitRFormat(OP_SPECIAL, REG_ZR, REG_V0, currentTemporary(), FCT_ADDU);
+  
   emitIFormat(OP_LW, REG_SP, REG_A0, 0); // size
   emitIFormat(OP_ADDIU, REG_SP, REG_SP, WORDSIZE);
 
+  emitRFormat(OP_SPECIAL, REG_V0, REG_A0, REG_A0, FCT_ADDU);
+
   emitIFormat(OP_ADDIU, REG_ZR, REG_V0, SYSCALL_MALLOC);
   emitRFormat(OP_SPECIAL, 0, 0, 0, FCT_SYSCALL);
+
+  emitRFormat(OP_SPECIAL, REG_ZR, currentTemporary(), REG_V0, FCT_ADDU);
+
+  tfree(1);
 
   emitRFormat(OP_SPECIAL, REG_RA, 0, 0, FCT_JR);
 }
