@@ -197,15 +197,18 @@ int O_RDONLY = 0; //32768;
 int MAC_O_CREAT_TRUNC_WRONLY = 1537;
 
 // LINUX: 577 = 0x0241 = O_CREAT (0x0040) | O_TRUNC (0x0200) | O_WRONLY (0x0001)
-int LINUX_O_CREAT_TRUNC_WRONLY = 577;
+int LINUX_X86_O_CREAT_TRUNC_WRONLY = 577;
+
+// LINUX: 769 = 0x0301 = O_CREAT (0x0100) | O_TRUNC (0x0200) | O_WRONLY (0x0001)
+int LINUX_MIPS_O_CREAT_TRUNC_WRONLY = 769;
 
 // WINDOWS: 33537 = 0x8301 = _O_BINARY (0x8000) | _O_CREAT (0x0100) | _O_TRUNC (0x0200) | _O_WRONLY (0x0001)
 int WINDOWS_O_BINARY_CREAT_TRUNC_WRONLY = 33537;
 
-// flags for rw-r--r-- file permissions
-// 420 = 00644 = S_IRUSR (00400) | S_IWUSR (00200) | S_IRGRP (00040) | S_IROTH (00004)
+// flags for rwx-r--r-- file permissions
+// 484 = 00744 = S_IRUSR (00400) | S_IWUSR (00200) | S_IRGRP (00040) | S_IROTH (00004)
 // these flags seem to be working for LINUX, MAC, and WINDOWS
-int S_IRUSR_IWUSR_IRGRP_IROTH = 420;
+int S_IRUSR_IWUSR_IRGRP_IROTH = 484;
 
 // ------------------------ GLOBAL VARIABLES -----------------------
 
@@ -4792,14 +4795,19 @@ int openWriteOnly(int* name) {
   // try Mac flags
   fd = open(name, MAC_O_CREAT_TRUNC_WRONLY, S_IRUSR_IWUSR_IRGRP_IROTH);
 
-  if (fd < 0) {
-    // try Linux flags
-    fd = open(name, LINUX_O_CREAT_TRUNC_WRONLY, S_IRUSR_IWUSR_IRGRP_IROTH);
+  if (fd < 3) {
+    // try Linux x86 flags 
+    fd = open(name, LINUX_X86_O_CREAT_TRUNC_WRONLY, S_IRUSR_IWUSR_IRGRP_IROTH);
 
-    if (fd < 0)
-      // try Windows flags
-      fd = open(name, WINDOWS_O_BINARY_CREAT_TRUNC_WRONLY, S_IRUSR_IWUSR_IRGRP_IROTH);
+    if (fd < 3) {
+      // try Linux Mips flags (Source: arch/mips/include/uapi/asm/fcntl.h)
+      fd = open(name, LINUX_MIPS_O_CREAT_TRUNC_WRONLY, S_IRUSR_IWUSR_IRGRP_IROTH);
+      if (fd < 3)
+	// try Windows flags
+	fd = open(name, WINDOWS_O_BINARY_CREAT_TRUNC_WRONLY, S_IRUSR_IWUSR_IRGRP_IROTH);
+    }
   }
+    
 
   return fd;
 }
