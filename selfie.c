@@ -420,7 +420,7 @@ void resetScanner() {
 
 void resetSymbolTables();
 
-void createSymbolTableEntry(int which, int* string, int line, int class, int type, int value, int address);
+void createSymbolTableEntry(int which, int* string, int line, int class, int type, int value, int address, int flags);
 
 int* searchSymbolTable(int* entry, int* string, int class);
 int* getScopedSymbolTableEntry(int* string, int class);
@@ -448,6 +448,7 @@ int  getType(int* entry)       { return        *(entry + 4); }
 int  getValue(int* entry)      { return        *(entry + 5); }
 int  getAddress(int* entry)    { return        *(entry + 6); }
 int  getScope(int* entry)      { return        *(entry + 7); }
+int  getFlags(int* entry)      { return        *(entry + 8); }
 
 void setNextEntry(int* entry, int* next)    { *entry       = (int) next; }
 void setString(int* entry, int* identifier) { *(entry + 1) = (int) identifier; }
@@ -457,8 +458,12 @@ void setType(int* entry, int type)          { *(entry + 4) = type; }
 void setValue(int* entry, int value)        { *(entry + 5) = value; }
 void setAddress(int* entry, int address)    { *(entry + 6) = address; }
 void setScope(int* entry, int scope)        { *(entry + 7) = scope; }
+void setFlags(int* entry, int flags)        { *(entry + 8) = flags; }
 
 // ------------------------ GLOBAL CONSTANTS -----------------------
+
+// flags
+int ST_PR_DEFINED = 1; // if procedure is defined, its flag is set to 1
 
 // classes
 int VARIABLE  = 1;
@@ -2442,10 +2447,10 @@ void getSymbol() {
 // ------------------------- SYMBOL TABLE --------------------------
 // -----------------------------------------------------------------
 
-void createSymbolTableEntry(int whichTable, int* string, int line, int class, int type, int value, int address) {
+void createSymbolTableEntry(int whichTable, int* string, int line, int class, int type, int value, int address, int flags) {
   int* newEntry;
 
-  newEntry = malloc(2 * SIZEOFINTSTAR + 6 * SIZEOFINT);
+  newEntry = malloc(2 * SIZEOFINTSTAR + 7 * SIZEOFINT);
 
   setString(newEntry, string);
   setLineNumber(newEntry, line);
@@ -2453,6 +2458,7 @@ void createSymbolTableEntry(int whichTable, int* string, int line, int class, in
   setType(newEntry, type);
   setValue(newEntry, value);
   setAddress(newEntry, address);
+  setFlags(newEntry, flags);
 
   // create entry at head of symbol table
   if (whichTable == GLOBAL_TABLE) {
@@ -2522,7 +2528,7 @@ int isUndefinedProcedure(int* entry) {
     else if (getAddress(entry) == 0)
       // procedure declared but not defined
       return 1;
-    else if (getOpcode(loadBinary(getAddress(entry) - ELF_ENTRY_POINT - ELF_HEADER_LEN)) == OP_JAL)
+    else if (getFlags(entry) != ST_PR_DEFINED)
       // procedure called but not defined
       return 1;
   }
@@ -2879,7 +2885,7 @@ void load_string(int* string) {
 
   allocatedMemory = allocatedMemory + roundUp(length, WORDSIZE);
 
-  createSymbolTableEntry(GLOBAL_TABLE, string, lineNumber, STRING, INTSTAR_T, 0, -allocatedMemory);
+  createSymbolTableEntry(GLOBAL_TABLE, string, lineNumber, STRING, INTSTAR_T, 0, -allocatedMemory, 0);
 
   talloc();
 
@@ -2895,7 +2901,7 @@ int help_call_codegen(int* entry, int* procedure) {
     // default return type is "int"
     type = INT_T;
 
-    createSymbolTableEntry(GLOBAL_TABLE, procedure, lineNumber, PROCEDURE, type, 0, binaryLength);
+    createSymbolTableEntry(GLOBAL_TABLE, procedure, lineNumber, PROCEDURE, type, 0, binaryLength, 0);
 
     emitJFormat(OP_JAL, 0);
 
@@ -2907,7 +2913,7 @@ int help_call_codegen(int* entry, int* procedure) {
       setAddress(entry, binaryLength);
 
       emitJFormat(OP_JAL, 0);
-    } else if (getOpcode(loadBinary(getAddress(entry))) == OP_JAL) {
+    } else if (getFlags(entry) != ST_PR_DEFINED) {
       // procedure called and possibly declared but not defined
 
       // create fixup chain
@@ -3802,13 +3808,13 @@ void gr_variable(int offset) {
 
   if (symbol == SYM_IDENTIFIER) {
     // TODO: check if identifier has already been declared
-    createSymbolTableEntry(LOCAL_TABLE, identifier, lineNumber, VARIABLE, type, 0, offset);
+    createSymbolTableEntry(LOCAL_TABLE, identifier, lineNumber, VARIABLE, type, 0, offset, 0);
 
     getSymbol();
   } else {
     syntaxErrorSymbol(SYM_IDENTIFIER);
 
-    createSymbolTableEntry(LOCAL_TABLE, (int*) "missing variable name", lineNumber, VARIABLE, type, 0, offset);
+    createSymbolTableEntry(LOCAL_TABLE, (int*) "missing variable name", lineNumber, VARIABLE, type, 0, offset, 0);
   }
 }
 
@@ -3943,7 +3949,7 @@ void gr_procedure(int* procedure, int type) {
     // this is a procedure declaration
     if (entry == (int*) 0)
       // procedure never called nor declared nor defined
-      createSymbolTableEntry(GLOBAL_TABLE, procedure, lineNumber, PROCEDURE, type, 0, 0);
+      createSymbolTableEntry(GLOBAL_TABLE, procedure, lineNumber, PROCEDURE, type, 0, 0, 0);
     else if (getType(entry) != type)
       // procedure already called, declared, or even defined
       // check return type but otherwise ignore
@@ -3955,14 +3961,16 @@ void gr_procedure(int* procedure, int type) {
     // this is a procedure definition
     if (entry == (int*) 0)
       // procedure never called nor declared nor defined
-      createSymbolTableEntry(GLOBAL_TABLE, procedure, lineNumber, PROCEDURE, type, 0, binaryCurAdr);
+      createSymbolTableEntry(GLOBAL_TABLE, procedure, lineNumber, PROCEDURE, type, 0, binaryCurAdr, 1);
     else {
       // procedure already called or declared or defined
       if (getAddress(entry) != 0) {
         // procedure already called or defined
-        if (getOpcode(loadBinary(getAddress(entry))) == OP_JAL) {
+        if (getFlags(entry) != ST_PR_DEFINED) {
           // procedure already called but not defined
           fixlink_absolute(getAddress(entry), binaryCurAdr);
+
+	  setFlags(entry, 1);
 
           if (stringCompare(procedure, (int*) "main"))
             // first source containing main procedure provides binary name
@@ -3981,6 +3989,7 @@ void gr_procedure(int* procedure, int type) {
 
         setType(entry, type);
         setAddress(entry, binaryCurAdr);
+	setFlags(entry, 1);
       } else {
         // procedure already defined
         printLineNumber((int*) "warning", lineNumber);
@@ -4104,7 +4113,7 @@ void gr_cstar() {
           if (entry == (int*) 0) {
             allocatedMemory = allocatedMemory + WORDSIZE;
 
-            createSymbolTableEntry(GLOBAL_TABLE, variableOrProcedureName, currentLineNumber, VARIABLE, type, initialValue, -allocatedMemory);
+            createSymbolTableEntry(GLOBAL_TABLE, variableOrProcedureName, currentLineNumber, VARIABLE, type, initialValue, -allocatedMemory, 0);
           } else {
             // global variable already declared or defined
             printLineNumber((int*) "warning", currentLineNumber);
@@ -4164,7 +4173,7 @@ void emitMainEntry() {
 
   mainJump = binaryLength;
 
-  createSymbolTableEntry(GLOBAL_TABLE, (int*) "main", 0, PROCEDURE, INT_T, 0, mainJump);
+  createSymbolTableEntry(GLOBAL_TABLE, (int*) "main", 0, PROCEDURE, INT_T, 0, mainJump, 0);
 
   // jump and link to main, will return here only if there is no exit call
   emitJFormat(OP_JAL, 0);
@@ -4984,7 +4993,7 @@ void selfie_load() {
 // -----------------------------------------------------------------
 
 void emitExit() {
-  createSymbolTableEntry(LIBRARY_TABLE, (int*) "exit", 0, PROCEDURE, VOID_T, 0, binaryCurAdr);
+  createSymbolTableEntry(LIBRARY_TABLE, (int*) "exit", 0, PROCEDURE, VOID_T, 0, binaryCurAdr, 1);
 
   // load argument for exit
   emitIFormat(OP_LW, REG_SP, REG_A0, 0); // exit code
@@ -5014,7 +5023,7 @@ void implementExit(int* context) {
 }
 
 void emitRead() {
-  createSymbolTableEntry(LIBRARY_TABLE, (int*) "read", 0, PROCEDURE, INT_T, 0, binaryCurAdr);
+  createSymbolTableEntry(LIBRARY_TABLE, (int*) "read", 0, PROCEDURE, INT_T, 0, binaryCurAdr, 1);
 
   emitIFormat(OP_LW, REG_SP, REG_A2, 0); // size
   emitIFormat(OP_ADDIU, REG_SP, REG_SP, WORDSIZE);
@@ -5131,7 +5140,7 @@ void implementRead(int* context) {
 }
 
 void emitWrite() {
-  createSymbolTableEntry(LIBRARY_TABLE, (int*) "write", 0, PROCEDURE, INT_T, 0, binaryCurAdr);
+  createSymbolTableEntry(LIBRARY_TABLE, (int*) "write", 0, PROCEDURE, INT_T, 0, binaryCurAdr, 1);
 
   emitIFormat(OP_LW, REG_SP, REG_A2, 0); // size
   emitIFormat(OP_ADDIU, REG_SP, REG_SP, WORDSIZE);
@@ -5247,7 +5256,7 @@ void implementWrite(int* context) {
 }
 
 void emitOpen() {
-  createSymbolTableEntry(LIBRARY_TABLE, (int*) "open", 0, PROCEDURE, INT_T, 0, binaryCurAdr);
+  createSymbolTableEntry(LIBRARY_TABLE, (int*) "open", 0, PROCEDURE, INT_T, 0, binaryCurAdr, 1);
 
   emitIFormat(OP_LW, REG_SP, REG_A2, 0); // mode
   emitIFormat(OP_ADDIU, REG_SP, REG_SP, WORDSIZE);
@@ -5353,11 +5362,11 @@ void implementOpen(int* context) {
 }
 
 void emitMalloc() {
-  createSymbolTableEntry(LIBRARY_TABLE, (int*) "malloc", 0, PROCEDURE, INTSTAR_T, 0, binaryCurAdr);
+  createSymbolTableEntry(LIBRARY_TABLE, (int*) "malloc", 0, PROCEDURE, INTSTAR_T, 0, binaryCurAdr, 1);
 
   // on boot levels higher than zero, zalloc falls back to malloc
   // assuming that page frames are zeroed on boot level zero
-  createSymbolTableEntry(LIBRARY_TABLE, (int*) "zalloc", 0, PROCEDURE, INTSTAR_T, 0, binaryCurAdr);
+  createSymbolTableEntry(LIBRARY_TABLE, (int*) "zalloc", 0, PROCEDURE, INTSTAR_T, 0, binaryCurAdr, 1);
 
   emitIFormat(OP_ADDIU, REG_ZR, REG_A0, 0);
   emitIFormat(OP_ADDIU, REG_ZR, REG_V0, SYSCALL_MALLOC);
@@ -5383,34 +5392,38 @@ void emitMalloc() {
 }
 
 int implementMalloc(int* context) {
-  int size;
+  int newProgramBreak;
   int bump;
+
+  newProgramBreak = roundUp(*(getRegs(context)+REG_A0), WORDSIZE);
+
+  bump = getProgramBreak(context);
+  
+  if (newProgramBreak == 0)
+    //just return current Programbreak
+    newProgramBreak = bump;
 
   if (debug_malloc) {
     print(selfieName);
     print((int*) ": trying to malloc ");
-    printInteger(*(getRegs(context)+REG_A0));
+    printInteger(newProgramBreak - bump);
     print((int*) " bytes");
     println();
   }
 
-  size = roundUp(*(getRegs(context)+REG_A0), WORDSIZE);
-
-  bump = getProgramBreak(context);
-
-  if (bump + size >= *(getRegs(context)+REG_SP)) {
+  if (newProgramBreak >= *(getRegs(context)+REG_SP)) {
     setExitCode(context, EXITCODE_OUTOFVIRTUALMEMORY);
 
     return EXIT;
   } else {
-    *(getRegs(context)+REG_V0) = bump;
+    *(getRegs(context)+REG_V0) = newProgramBreak;
 
-    setProgramBreak(context, bump + size);
+    setProgramBreak(context, newProgramBreak);
 
     if (debug_malloc) {
       print(selfieName);
       print((int*) ": actually mallocating ");
-      printInteger(size);
+      printInteger(newProgramBreak - bump);
       print((int*) " bytes at virtual address ");
       printHexadecimal(bump, 8);
       println();
@@ -5425,7 +5438,7 @@ int implementMalloc(int* context) {
 // -----------------------------------------------------------------
 
 void emitSwitch() {
-  createSymbolTableEntry(LIBRARY_TABLE, (int*) "hypster_switch", 0, PROCEDURE, INTSTAR_T, 0, binaryCurAdr);
+  createSymbolTableEntry(LIBRARY_TABLE, (int*) "hypster_switch", 0, PROCEDURE, INTSTAR_T, 0, binaryCurAdr, 1);
 
   emitIFormat(OP_LW, REG_SP, REG_A1, 0); // number of instructions to execute
   emitIFormat(OP_ADDIU, REG_SP, REG_SP, WORDSIZE);
@@ -6545,7 +6558,7 @@ int* allocateContext(int* parent, int* vctxt, int* in) {
   if (in != (int*) 0)
     setPrevContext(in, context);
 
-  setPC(context, 0);
+  setPC(context, ELF_ENTRY_POINT + ELF_HEADER_LEN);
 
   // allocate zeroed memory for general purpose registers
   // TODO: reuse memory
@@ -6877,7 +6890,7 @@ void up_loadBinary(int* context) {
   vaddr = 0;
 
   while (vaddr < binaryLength) {
-    mapAndStore(context, vaddr, loadBinary(vaddr));
+    mapAndStore(context, vaddr + ELF_ENTRY_POINT + ELF_HEADER_LEN, loadBinary(vaddr));
 
     vaddr = vaddr + WORDSIZE;
   }
@@ -6909,50 +6922,67 @@ void up_loadArguments(int* context, int argc, int* argv) {
   int SP;
   int vargv;
   int i_argc;
-  int i_vargv;
+  int* vargv_list;
+
+  vargv_list = malloc(argc * WORDSIZE); 
 
   // arguments are pushed onto stack which starts at highest virtual address
   SP = VIRTUALMEMORYSIZE - WORDSIZE;
 
   // allocate memory for storing stack pointer later
-  SP = SP - WORDSIZE;
-
+  //SP = SP - WORDSIZE;
+  
   // allocate memory for storing *argv array
-  SP = SP - argc * WORDSIZE;
+  //SP = SP - argc * WORDSIZE;
 
   // vargv invalid if argc == 0
-  vargv = SP + WORDSIZE;
+  //vargv = SP + WORDSIZE;
 
-  i_vargv = vargv;
+  //i_vargv = vargv;
   i_argc  = argc;
 
   while (i_argc > 0) {
     SP = up_loadString(context, (int*) *argv, SP);
 
     // store pointer to string in virtual *argv
-    mapAndStore(context, i_vargv, SP);
+    //mapAndStore(context, i_vargv, SP);
 
     argv = argv + 1;
 
-    i_vargv = i_vargv + WORDSIZE;
-
     i_argc = i_argc - 1;
+
+    *(vargv_list + i_argc) = SP;
+  }
+
+  i_argc  = 0;
+  
+  while(i_argc < argc) {
+
+    //i_argc = i_argc - 1;
+
+    SP = SP - WORDSIZE;
+    
+    mapAndStore(context, SP, *(vargv_list + i_argc));
+
+    i_argc = i_argc + 1;
   }
 
   // allocate memory for one word on the stack
-  SP = SP - WORDSIZE;
+  //SP = SP - WORDSIZE;
 
-  // push argc
-  mapAndStore(context, SP, argc);
+  // push argv
+  //mapAndStore(context, SP, vargv);
 
   // allocate memory for one word on the stack
   SP = SP - WORDSIZE;
 
-  // push virtual argv
-  mapAndStore(context, SP, vargv);
+  // push virtual argc
+  mapAndStore(context, SP, argc);
 
   // store stack pointer at highest virtual address for binary to retrieve
-  mapAndStore(context, VIRTUALMEMORYSIZE - WORDSIZE, SP);
+  //mapAndStore(context, VIRTUALMEMORYSIZE - WORDSIZE, SP);
+
+  *(getRegs(context)+REG_SP) = SP;
 }
 
 void mapUnmappedPages(int* context) {
