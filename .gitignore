@@ -1,14 +1,3 @@
 *.m
 *.s
 selfie
-Makefile
-*.core
-*.out
-core
-selfie_mips
-test
-test2
-main.c
-main
-*~
-

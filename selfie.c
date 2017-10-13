@@ -708,6 +708,8 @@ int encodeRFormat(int opcode, int rs, int rt, int rd, int function);
 int encodeIFormat(int opcode, int rs, int rt, int immediate);
 int encodeJFormat(int opcode, int instr_index);
 
+int nextFreeBinaryAddress();
+
 // -----------------------------------------------------------------
 // ---------------------------- DECODER ----------------------------
 // -----------------------------------------------------------------
@@ -832,7 +834,7 @@ int* binary = (int*) 0; // binary of emitted instructions
 
 int binaryLength = 0; // length of binary in bytes incl. globals & strings
 
-int binaryCurAdr = 0; //tracks current address in respect to ELF Header
+//int binaryCurAdr = 0; //tracks current address in respect to ELF Header
 
 int codeLength = 0; // length of code portion of binary in bytes
 
@@ -1022,7 +1024,7 @@ int TIMEROFF = -1;
 
 int interpret = 0; // flag for executing or disassembling code
 
-int debug = 0; // flag for logging code execution
+int debug = 1; // flag for logging code execution
 
 // hardware thread state
 
@@ -3961,14 +3963,14 @@ void gr_procedure(int* procedure, int type) {
     // this is a procedure definition
     if (entry == (int*) 0)
       // procedure never called nor declared nor defined
-      createSymbolTableEntry(GLOBAL_TABLE, procedure, lineNumber, PROCEDURE, type, 0, binaryCurAdr, 1);
+      createSymbolTableEntry(GLOBAL_TABLE, procedure, lineNumber, PROCEDURE, type, 0, nextFreeBinaryAddress(), 1);
     else {
       // procedure already called or declared or defined
       if (getAddress(entry) != 0) {
         // procedure already called or defined
         if (getFlags(entry) != ST_PR_DEFINED) {
           // procedure already called but not defined
-          fixlink_absolute(getAddress(entry), binaryCurAdr);
+          fixlink_absolute(getAddress(entry), nextFreeBinaryAddress());
 
 	  setFlags(entry, 1);
 
@@ -3988,7 +3990,7 @@ void gr_procedure(int* procedure, int type) {
           typeWarning(getType(entry), type);
 
         setType(entry, type);
-        setAddress(entry, binaryCurAdr);
+        setAddress(entry, nextFreeBinaryAddress());
 	setFlags(entry, 1);
       } else {
         // procedure already defined
@@ -4035,7 +4037,7 @@ void gr_procedure(int* procedure, int type) {
       exit(EXITCODE_PARSERERROR);
     }
 
-    fixlink_absolute(returnBranches, binaryCurAdr);
+    fixlink_absolute(returnBranches, nextFreeBinaryAddress());
 
     returnBranches = 0;
 
@@ -4349,7 +4351,7 @@ void selfie_compile() {
   // allocate memory for storing binary
   binary       = malloc(maxBinaryLength);
   binaryLength = 0;
-  binaryCurAdr = ELF_HEADER_LEN + ELF_ENTRY_POINT;
+  //  binaryCurAdr = ELF_HEADER_LEN + ELF_ENTRY_POINT;
   
   // reset code length
   codeLength = 0;
@@ -4557,6 +4559,10 @@ int encodeJFormat(int opcode, int instr_index) {
   return leftShift(opcode, 26) + instr_index;
 }
 
+int nextFreeBinaryAddress() {
+  return ELF_ENTRY_POINT + ELF_HEADER_LEN + binaryLength;
+}
+
 // -----------------------------------------------------------------
 // ---------------------------- DECODER ----------------------------
 // -----------------------------------------------------------------
@@ -4691,7 +4697,7 @@ void emitInstruction(int instruction) {
     *(sourceLineNumber + binaryLength / WORDSIZE) = lineNumber;
 
   binaryLength = binaryLength + WORDSIZE;
-  binaryCurAdr = binaryCurAdr + WORDSIZE;
+  //  binaryCurAdr = binaryCurAdr + WORDSIZE;
 }
 
 void emitRFormat(int opcode, int rs, int rt, int rd, int function) {
@@ -4783,7 +4789,7 @@ void emitGlobalsStrings() {
       storeBinary(binaryLength, getValue(entry));
 
       binaryLength = binaryLength + WORDSIZE;
-      binaryCurAdr = binaryCurAdr + WORDSIZE;
+      //      binaryCurAdr = binaryCurAdr + WORDSIZE;
     } else if (getClass(entry) == STRING)
       binaryLength = copyStringToBinary(getString(entry), binaryLength);
 
@@ -4933,7 +4939,7 @@ void selfie_load() {
   binary = touch(malloc(maxBinaryLength), maxBinaryLength);
 
   binaryLength = 0;
-  binaryCurAdr = ELF_ENTRY_POINT + ELF_HEADER_LEN;
+  //  binaryCurAdr = ELF_ENTRY_POINT + ELF_HEADER_LEN;
   codeLength   = 0;
 
   // no source line numbers in binaries
@@ -4993,7 +4999,7 @@ void selfie_load() {
 // -----------------------------------------------------------------
 
 void emitExit() {
-  createSymbolTableEntry(LIBRARY_TABLE, (int*) "exit", 0, PROCEDURE, VOID_T, 0, binaryCurAdr, 1);
+  createSymbolTableEntry(LIBRARY_TABLE, (int*) "exit", 0, PROCEDURE, VOID_T, 0, nextFreeBinaryAddress(), 1);
 
   // load argument for exit
   emitIFormat(OP_LW, REG_SP, REG_A0, 0); // exit code
@@ -5023,7 +5029,7 @@ void implementExit(int* context) {
 }
 
 void emitRead() {
-  createSymbolTableEntry(LIBRARY_TABLE, (int*) "read", 0, PROCEDURE, INT_T, 0, binaryCurAdr, 1);
+  createSymbolTableEntry(LIBRARY_TABLE, (int*) "read", 0, PROCEDURE, INT_T, 0, nextFreeBinaryAddress(), 1);
 
   emitIFormat(OP_LW, REG_SP, REG_A2, 0); // size
   emitIFormat(OP_ADDIU, REG_SP, REG_SP, WORDSIZE);
@@ -5140,7 +5146,7 @@ void implementRead(int* context) {
 }
 
 void emitWrite() {
-  createSymbolTableEntry(LIBRARY_TABLE, (int*) "write", 0, PROCEDURE, INT_T, 0, binaryCurAdr, 1);
+  createSymbolTableEntry(LIBRARY_TABLE, (int*) "write", 0, PROCEDURE, INT_T, 0, nextFreeBinaryAddress(), 1);
 
   emitIFormat(OP_LW, REG_SP, REG_A2, 0); // size
   emitIFormat(OP_ADDIU, REG_SP, REG_SP, WORDSIZE);
@@ -5256,7 +5262,7 @@ void implementWrite(int* context) {
 }
 
 void emitOpen() {
-  createSymbolTableEntry(LIBRARY_TABLE, (int*) "open", 0, PROCEDURE, INT_T, 0, binaryCurAdr, 1);
+  createSymbolTableEntry(LIBRARY_TABLE, (int*) "open", 0, PROCEDURE, INT_T, 0, nextFreeBinaryAddress(), 1);
 
   emitIFormat(OP_LW, REG_SP, REG_A2, 0); // mode
   emitIFormat(OP_ADDIU, REG_SP, REG_SP, WORDSIZE);
@@ -5362,11 +5368,11 @@ void implementOpen(int* context) {
 }
 
 void emitMalloc() {
-  createSymbolTableEntry(LIBRARY_TABLE, (int*) "malloc", 0, PROCEDURE, INTSTAR_T, 0, binaryCurAdr, 1);
+  createSymbolTableEntry(LIBRARY_TABLE, (int*) "malloc", 0, PROCEDURE, INTSTAR_T, 0, nextFreeBinaryAddress(), 1);
 
   // on boot levels higher than zero, zalloc falls back to malloc
   // assuming that page frames are zeroed on boot level zero
-  createSymbolTableEntry(LIBRARY_TABLE, (int*) "zalloc", 0, PROCEDURE, INTSTAR_T, 0, binaryCurAdr, 1);
+  createSymbolTableEntry(LIBRARY_TABLE, (int*) "zalloc", 0, PROCEDURE, INTSTAR_T, 0, nextFreeBinaryAddress(), 1);
 
   emitIFormat(OP_ADDIU, REG_ZR, REG_A0, 0);
   emitIFormat(OP_ADDIU, REG_ZR, REG_V0, SYSCALL_MALLOC);
@@ -5438,7 +5444,7 @@ int implementMalloc(int* context) {
 // -----------------------------------------------------------------
 
 void emitSwitch() {
-  createSymbolTableEntry(LIBRARY_TABLE, (int*) "hypster_switch", 0, PROCEDURE, INTSTAR_T, 0, binaryCurAdr, 1);
+  createSymbolTableEntry(LIBRARY_TABLE, (int*) "hypster_switch", 0, PROCEDURE, INTSTAR_T, 0, nextFreeBinaryAddress(), 1);
 
   emitIFormat(OP_LW, REG_SP, REG_A1, 0); // number of instructions to execute
   emitIFormat(OP_ADDIU, REG_SP, REG_SP, WORDSIZE);
@@ -6987,19 +6993,30 @@ void up_loadArguments(int* context, int argc, int* argv) {
 
 void mapUnmappedPages(int* context) {
   int page;
+  int maxPages;
 
-  // assert: page table is only mapped from beginning up and end down
+  // assert: page table is only mapped from beginning up and end down  <-- NOT TRUE ANYMORE
 
+  maxPages = (pageFrameMemory / PAGESIZE) - 1;
+    
   page = 0;
 
-  while (isPageMapped(getPT(context), page))
-    page = page + 1;
-
-  while (pavailable()) {
-    mapPage(context, page, (int) palloc());
-
+  while (page < maxPages) {
+    if (isPageMapped(getPT(context), page) == 0) {
+      if (pavailable())
+	mapPage(context, page, (int) palloc());
+    }
     page = page + 1;
   }
+
+  //while (isPageMapped(getPT(context), page))
+  //  page = page + 1;
+
+  //while (pavailable()) {
+  //  mapPage(context, page, (int) palloc());
+
+  //  page = page + 1;
+  //}
 }
 
 int handleSystemCalls(int* context) {
