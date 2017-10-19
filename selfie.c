@@ -1024,7 +1024,7 @@ int TIMEROFF = -1;
 
 int interpret = 0; // flag for executing or disassembling code
 
-int debug = 1; // flag for logging code execution
+int debug = 0; // flag for logging code execution
 
 // hardware thread state
 
@@ -4321,11 +4321,11 @@ void bootstrapCode() {
 
   binaryLength = savedBinaryLength;
 
-  reportUndefinedProcedures();
-  //if (reportUndefinedProcedures())
+  //reportUndefinedProcedures();
+  if (reportUndefinedProcedures())
     // rather than jump and link to the main procedure
     // exit by continuing to the next instruction (with delay slot)
-    //fixup_absolute(mainJump, ELF_ENTRY_POINT + ELF_HEADER_LEN + mainJump + 8);
+    fixup_absolute(mainJump, ELF_ENTRY_POINT + ELF_HEADER_LEN + mainJump + 8);
 
   mainJump = 0;
 }
