@@ -1428,12 +1428,12 @@ int multiplyWrap(int a, int b) {
       if (a > INT_MAX / b)
         INT_OVERFLOW = OVERFLOW_YES;
     } else {
-      if (b < INT_MIN / a)
+      if (b < -((-INT_MIN) / a))
         INT_OVERFLOW = OVERFLOW_YES;
     }
   } else {
     if (b > 0) {
-      if (a < INT_MIN / b)
+      if (a < -((-INT_MIN) / b))
         INT_OVERFLOW = OVERFLOW_YES;
     } else {
       if (a != 0)
@@ -3481,8 +3481,13 @@ void gr_while() {
   } else
     syntaxErrorSymbol(SYM_WHILE);
 
+  // assert: (binaryLength - brBackToWhile + WORDSIZE) > 0
+  // that is important to avoid division with a negative operand, since selfie emits only unsigned
+  // instructions (divu, multu). Mipster handles that correctly since it translates a divu instruction
+  // into a div, but for execution on another emulator (e.g qemu) this needs to be considerd.
+
   // unconditional branch to beginning of while
-  emitIFormat(OP_BEQ, REG_ZR, REG_ZR, -((-(brBackToWhile - binaryLength - WORDSIZE)) / WORDSIZE));
+  emitIFormat(OP_BEQ, REG_ZR, REG_ZR, -((binaryLength - brBackToWhile + WORDSIZE) / WORDSIZE));
 
   if (brForwardToEnd != 0)
     // first instruction after loop comes here
@@ -4321,7 +4326,6 @@ void bootstrapCode() {
 
   binaryLength = savedBinaryLength;
 
-  //reportUndefinedProcedures();
   if (reportUndefinedProcedures())
     // rather than jump and link to the main procedure
     // exit by continuing to the next instruction (with delay slot)
@@ -4461,21 +4465,7 @@ void selfie_compile() {
     print((int*) ": nothing to compile, only library generated");
     println();
   }
-////////////////////////////////////////////////////////////////////
 
-  //entry = global_symbol_table;
-
-  //while ((int) entry != 0) {
-  //	  if(getClass(entry) != STRING){
-  //		  print(getString(entry));
-  //		  print((int*) ": ");
-  //		  print(itoa(getAddress(entry), integer_buffer, 10, 0, 0));
-  //		  println();
-  //	  }
-
-  //entry = getNextEntry(entry);
-  //}
-////////////////////////////////////////////////////////////////////
   codeLength = binaryLength;
 
   emitGlobalsStrings();
