@@ -273,7 +273,7 @@ void init_library() {
   INT64_MIN = INT64_MAX + 1;
 
   // allocate and touch to make sure memory is mapped for read calls
-  character_buffer  = smalloc(128 * SIZEOFUINT64);
+  character_buffer  = smalloc(1024);
   *character_buffer = 0;
 
   output_buffer = smalloc(SIZEOFUINT64);
@@ -2438,7 +2438,7 @@ void get_character() {
 
 void fill_character_buffer() {
   // fills or refills our char buffer
-  chars_in_buffer = read(source_fd, character_buffer, 128 * SIZEOFUINT64);
+  chars_in_buffer = read(source_fd, character_buffer, 1024);
   char_buffer_idx = 0;
 }
 
