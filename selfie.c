@@ -211,8 +211,11 @@ uint64_t* integer_buffer;   // buffer for printing integers
 uint64_t* filename_buffer;  // buffer for opening files
 uint64_t* binary_buffer;    // buffer for binary I/O
 
+// character buffer specification
+uint64_t CHAR_BUFFER_SIZE = 8;
 uint64_t char_buffer_idx = 0;
 uint64_t chars_in_buffer = 0;
+
 // flags for opening read-only files
 // LINUX:       0 = 0x0000 = O_RDONLY (0x0000)
 // MAC:         0 = 0x0000 = O_RDONLY (0x0000)
@@ -5958,7 +5961,7 @@ void implement_read(uint64_t* context) {
 
         size = 0;
 
-        if (char_buffer_idx)
+        if (debug_read)
           printf2((uint64_t*) "%s: reading into virtual address %p failed because the address is unmapped\n", selfie_name, (uint64_t*) vbuffer);
       }
     } else {
@@ -5966,7 +5969,7 @@ void implement_read(uint64_t* context) {
 
       size = 0;
 
-      if (char_buffer_idx)
+      if (debug_read)
         printf2((uint64_t*) "%s: reading into virtual address %p failed because the address is invalid\n", selfie_name, (uint64_t*) vbuffer);
     }
   }
@@ -5985,7 +5988,7 @@ void implement_read(uint64_t* context) {
 
   set_pc(context, get_pc(context) + INSTRUCTIONSIZE);
 
-  if (char_buffer_idx)
+  if (debug_read)
     printf3((uint64_t*) "%s: actually read %d bytes from file with descriptor %d\n", selfie_name, (uint64_t*) read_total, (uint64_t*) fd);
 
   if (disassemble) {
