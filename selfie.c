@@ -135,6 +135,7 @@ uint64_t fixed_point_ratio(uint64_t a, uint64_t b, uint64_t f);
 uint64_t fixed_point_percentage(uint64_t r, uint64_t f);
 
 void put_character(uint64_t c);
+void put_string(uint64_t* string, uint64_t string_len);
 
 void print(uint64_t* s);
 void println();
@@ -205,10 +206,13 @@ uint64_t UINT64_MAX; // maximum numerical value of an unsigned 64-bit integer
 uint64_t MAX_FILENAME_LENGTH = 128;
 
 uint64_t* character_buffer; // buffer for reading and writing characters
+uint64_t* output_buffer;    // buffer for printing characters to console
 uint64_t* integer_buffer;   // buffer for printing integers
 uint64_t* filename_buffer;  // buffer for opening files
 uint64_t* binary_buffer;    // buffer for binary I/O
 
+uint64_t char_buffer_idx = 0;
+uint64_t chars_in_buffer = 0;
 // flags for opening read-only files
 // LINUX:       0 = 0x0000 = O_RDONLY (0x0000)
 // MAC:         0 = 0x0000 = O_RDONLY (0x0000)
@@ -266,8 +270,11 @@ void init_library() {
   INT64_MIN = INT64_MAX + 1;
 
   // allocate and touch to make sure memory is mapped for read calls
-  character_buffer  = smalloc(SIZEOFUINT64);
+  character_buffer  = smalloc(128 * SIZEOFUINT64);
   *character_buffer = 0;
+
+  output_buffer = smalloc(SIZEOFUINT64);
+  *output_buffer = 0;
 
   // accommodate at least CPUBITWIDTH numbers for itoa, no mapping needed
   integer_buffer = smalloc(CPUBITWIDTH + 1);
@@ -305,6 +312,7 @@ void syntax_error_character(uint64_t character);
 void syntax_error_identifier(uint64_t* expected);
 
 void get_character();
+void fill_character_buffer();
 
 uint64_t is_character_new_line();
 uint64_t is_character_whitespace();
@@ -2056,7 +2064,7 @@ uint64_t fixed_point_percentage(uint64_t r, uint64_t f) {
 }
 
 void put_character(uint64_t c) {
-  *character_buffer = c;
+  *output_buffer = c;
 
   // assert: character_buffer is mapped
 
@@ -2081,19 +2089,33 @@ void put_character(uint64_t c) {
   }
 }
 
+void put_string(uint64_t* string, uint64_t string_len) {
+  if (write(output_fd, string, string_len) == string_len) {
+    if (output_fd != 1)
+      // count number of characters written to a file,
+      // not the console which has file descriptor 1
+      number_of_written_characters = number_of_written_characters + string_len;
+  } else {
+    // write failed
+    if (output_fd != 1) {
+      // failed write was not to the console which has file descriptor 1
+      // to report the error we may thus still write to the console
+      output_fd = 1;
+
+      printf2((uint64_t*) "%s: could not write character to output file %s\n", selfie_name, output_name);
+    }
+
+    exit(EXITCODE_IOERROR);
+  }
+}
+
 void print(uint64_t* s) {
   uint64_t i;
 
   if (s == (uint64_t*) 0)
     print((uint64_t*) "NULL");
   else {
-    i = 0;
-
-    while (load_character(s, i) != 0) {
-      put_character(load_character(s, i));
-
-      i = i + 1;
-    }
+    put_string(s, string_length(s));
   }
 }
 
@@ -2388,27 +2410,33 @@ void syntax_error_identifier(uint64_t* expected) {
 }
 
 void get_character() {
-  uint64_t number_of_read_bytes;
-
   // assert: character_buffer is mapped
+  if (chars_in_buffer == 0) {
+    fill_character_buffer();
+  } else if (char_buffer_idx >= chars_in_buffer) {
+    fill_character_buffer();
+  }
 
-  // try to read 1 character into character_buffer
-  // from file with source_fd file descriptor
-  number_of_read_bytes = read(source_fd, character_buffer, 1);
-
-  if (number_of_read_bytes == 1) {
-    // store the read character in the global variable called character
-    character = *character_buffer;
-
-    number_of_read_characters = number_of_read_characters + 1;
-  } else if (number_of_read_bytes == 0)
+  if (chars_in_buffer == 0) {
     // reached end of file
     character = CHAR_EOF;
-  else {
+  } else if (char_buffer_idx < chars_in_buffer) {
+    // store the read character in the global variable called character
+    character = load_character(character_buffer, char_buffer_idx);
+    char_buffer_idx = char_buffer_idx + 1;
+
+    number_of_read_characters = number_of_read_characters + 1;
+  } else {
     printf2((uint64_t*) "%s: could not read character from input file %s\n", selfie_name, source_name);
 
     exit(EXITCODE_IOERROR);
   }
+}
+
+void fill_character_buffer() {
+  // fills or refills our char buffer
+  chars_in_buffer = read(source_fd, character_buffer, 128 * SIZEOFUINT64);
+  char_buffer_idx = 0;
 }
 
 uint64_t is_character_new_line() {
@@ -5930,7 +5958,7 @@ void implement_read(uint64_t* context) {
 
         size = 0;
 
-        if (debug_read)
+        if (char_buffer_idx)
           printf2((uint64_t*) "%s: reading into virtual address %p failed because the address is unmapped\n", selfie_name, (uint64_t*) vbuffer);
       }
     } else {
@@ -5938,7 +5966,7 @@ void implement_read(uint64_t* context) {
 
       size = 0;
 
-      if (debug_read)
+      if (char_buffer_idx)
         printf2((uint64_t*) "%s: reading into virtual address %p failed because the address is invalid\n", selfie_name, (uint64_t*) vbuffer);
     }
   }
@@ -5957,7 +5985,7 @@ void implement_read(uint64_t* context) {
 
   set_pc(context, get_pc(context) + INSTRUCTIONSIZE);
 
-  if (debug_read)
+  if (char_buffer_idx)
     printf3((uint64_t*) "%s: actually read %d bytes from file with descriptor %d\n", selfie_name, (uint64_t*) read_total, (uint64_t*) fd);
 
   if (disassemble) {
@@ -6551,12 +6579,12 @@ void print_code_line_number_for_instruction(uint64_t a) {
 
 void print_code_context_for_instruction() {
   if (execute) {
-    printf2((uint64_t*) "%s: $pc=%x", binary_name, (uint64_t*) pc);
-    print_code_line_number_for_instruction(pc - entry_point);
+    printf2((uint64_t*) "%s: $pc=%x", binary_name, (uint64_t*) a);
+    print_code_line_number_for_instruction(a - entry_point);
   } else {
-    printf1((uint64_t*) "%x", (uint64_t*) pc);
+    printf1((uint64_t*) "%x", (uint64_t*) a);
     if (disassemble_verbose) {
-      print_code_line_number_for_instruction(pc);
+      print_code_line_number_for_instruction(a);
       printf1((uint64_t*) ": %p", (uint64_t*) ir);
     }
   }
@@ -8611,7 +8639,8 @@ uint64_t instruction_with_max_counter(uint64_t* counters, uint64_t max) {
   uint64_t i;
   uint64_t c;
 
-  a = -1;
+  a = UINT64_MAX;
+
   n = 0;
   i = 0;
 
@@ -8632,7 +8661,7 @@ uint64_t instruction_with_max_counter(uint64_t* counters, uint64_t max) {
   if (a != UINT64_MAX)
     return a * INSTRUCTIONSIZE;
   else
-    return -1;
+    return UINT64_MAX;
 }
 
 uint64_t print_per_instruction_counter(uint64_t total, uint64_t* counters, uint64_t max) {
@@ -9075,6 +9104,7 @@ uint64_t* palloc() {
 /*
 void pfree(uint64_t* frame) {
   // TODO: implement free list of page frames
+  frame = (uint64_t*) 0;
 }
 */
 
