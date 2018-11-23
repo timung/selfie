@@ -1039,7 +1039,7 @@ void init_memory(uint64_t megabytes) {
 // -----------------------------------------------------------------
 
 void print_code_line_number_for_instruction(uint64_t a);
-void print_code_context_for_instruction();
+void print_code_context_for_instruction(uint64_t a);
 
 void print_lui();
 void print_lui_before();
@@ -6580,7 +6580,7 @@ void print_code_line_number_for_instruction(uint64_t a) {
     printf1((uint64_t*) "(~%d)", (uint64_t*) *(code_line_number + a / INSTRUCTIONSIZE));
 }
 
-void print_code_context_for_instruction() {
+void print_code_context_for_instruction(uint64_t a) {
   if (execute) {
     printf2((uint64_t*) "%s: $pc=%x", binary_name, (uint64_t*) a);
     print_code_line_number_for_instruction(a - entry_point);
@@ -6595,7 +6595,7 @@ void print_code_context_for_instruction() {
 }
 
 void print_lui() {
-  print_code_context_for_instruction();
+  print_code_context_for_instruction(pc);
   printf2((uint64_t*) "lui %s,%x", get_register_name(rd), (uint64_t*) sign_shrink(imm, 20));
 }
 
@@ -6643,7 +6643,7 @@ void constrain_lui() {
 }
 
 void print_addi() {
-  print_code_context_for_instruction();
+  print_code_context_for_instruction(pc);
 
   if (rd == REG_ZR)
     if (rs1 == REG_ZR)
@@ -6718,7 +6718,7 @@ void constrain_addi() {
 }
 
 void print_add_sub_mul_divu_remu_sltu(uint64_t *mnemonics) {
-  print_code_context_for_instruction();
+  print_code_context_for_instruction(pc);
   printf4((uint64_t*) "%s %s,%s,%s", mnemonics, get_register_name(rd), get_register_name(rs1), get_register_name(rs2));
 }
 
@@ -7234,7 +7234,7 @@ void backtrack_sltu() {
 }
 
 void print_ld() {
-  print_code_context_for_instruction();
+  print_code_context_for_instruction(pc);
   printf3((uint64_t*) "ld %s,%d(%s)", get_register_name(rd), (uint64_t*) imm, get_register_name(rs1));
 }
 
@@ -7361,7 +7361,7 @@ uint64_t constrain_ld() {
 }
 
 void print_sd() {
-  print_code_context_for_instruction();
+  print_code_context_for_instruction(pc);
   printf3((uint64_t*) "sd %s,%d(%s)", get_register_name(rs2), (uint64_t*) imm, get_register_name(rs1));
 }
 
@@ -7500,7 +7500,7 @@ void undo_sd() {
 }
 
 void print_beq() {
-  print_code_context_for_instruction();
+  print_code_context_for_instruction(pc);
   printf4((uint64_t*) "beq %s,%s,%d[%x]", get_register_name(rs1), get_register_name(rs2), (uint64_t*) signed_division(imm, INSTRUCTIONSIZE), (uint64_t*) (pc + imm));
 }
 
@@ -7533,7 +7533,7 @@ void do_beq() {
 }
 
 void print_jal() {
-  print_code_context_for_instruction();
+  print_code_context_for_instruction(pc);
   printf3((uint64_t*) "jal %s,%d[%x]", get_register_name(rd), (uint64_t*) signed_division(imm, INSTRUCTIONSIZE), (uint64_t*) (pc + imm));
 }
 
@@ -7601,7 +7601,7 @@ void constrain_jal_jalr() {
 }
 
 void print_jalr() {
-  print_code_context_for_instruction();
+  print_code_context_for_instruction(pc);
   printf3((uint64_t*) "jalr %s,%d(%s)", get_register_name(rd), (uint64_t*) signed_division(imm, INSTRUCTIONSIZE), get_register_name(rs1));
 }
 
@@ -7641,7 +7641,7 @@ void do_jalr() {
 }
 
 void print_ecall() {
-  print_code_context_for_instruction();
+  print_code_context_for_instruction(pc);
   print((uint64_t*) "ecall");
 }
 

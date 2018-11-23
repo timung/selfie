@@ -1,5 +1,5 @@
 # Compiler flags
-CFLAGS := -Wall -Wextra -O3 -m64 -D'main(a,b)=main(int argc, char** argv)' -Duint64_t='unsigned long long' -Dulong='unsigned long'
+CFLAGS := -w -O3 -m64 -D'main(a,b)=main(int argc, char** argv)' -Duint64_t='unsigned long long' -Dulong='unsigned long'
 
 # Compile selfie.c into selfie executable
 selfie: selfie.c
@@ -73,7 +73,7 @@ riscv-tools:
 	docker push cksystemsteaching/riscv-tools
 
 # Run everything
-all: compile quine debug replay os vm min mob sat
+all: compile debug replay os vm min mob sat
 
 # Clean up
 clean:
