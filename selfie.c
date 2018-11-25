@@ -88,11 +88,15 @@ Professor Jochen Liedtke from University of Karlsruhe.
 // ----------------------- BUILTIN PROCEDURES ----------------------
 // -----------------------------------------------------------------
 
-void  exit(int code);
-int   read(int fd, uint64_t* buffer, int bytes_to_read);
-int   write(int fd, uint64_t* buffer, int bytes_to_write);
-int   open(uint64_t* filename, int flags, char* mode);
-void* malloc(ulong size);
+// selfie bootstraps int to uint64_t!
+void exit(int code);
+
+uint64_t read(uint64_t fd, uint64_t* buffer, uint64_t bytes_to_read);
+uint64_t write(uint64_t fd, uint64_t* buffer, uint64_t bytes_to_write);
+uint64_t open(uint64_t* filename, uint64_t flags, uint64_t mode);
+
+// selfie bootstraps void* and unsigned long to uint64_t* and uint64_t, respectively!
+void* malloc(unsigned long);
 
 // -----------------------------------------------------------------
 // ----------------------- LIBRARY PROCEDURES ----------------------
@@ -121,6 +125,7 @@ uint64_t sign_extend(uint64_t n, uint64_t b);
 uint64_t sign_shrink(uint64_t n, uint64_t b);
 
 uint64_t  load_character(uint64_t* s, uint64_t i);
+uint64_t  load_character_from_buffer(uint64_t index);
 uint64_t* store_character(uint64_t* s, uint64_t i, uint64_t c);
 
 uint64_t  string_length(uint64_t* s);
@@ -128,7 +133,7 @@ uint64_t* string_copy(uint64_t* s);
 void      string_reverse(uint64_t* s);
 uint64_t  string_compare(uint64_t* s, uint64_t* t);
 
-uint64_t  selfie_atoi(uint64_t* s);
+uint64_t  atoi(uint64_t* s);
 uint64_t* itoa(uint64_t n, uint64_t* s, uint64_t b, uint64_t a);
 
 uint64_t fixed_point_ratio(uint64_t a, uint64_t b, uint64_t f);
@@ -163,6 +168,8 @@ uint64_t round_up(uint64_t n, uint64_t m);
 uint64_t* smalloc(uint64_t size);
 uint64_t* zalloc(uint64_t size);
 
+void assert(uint64_t assertion, uint64_t* message);
+
 // ------------------------ GLOBAL CONSTANTS -----------------------
 
 uint64_t CHAR_EOF          =  -1; // end of file
@@ -171,24 +178,24 @@ uint64_t CHAR_TAB          =   9; // ASCII code 9  = tabulator
 uint64_t CHAR_LF           =  10; // ASCII code 10 = line feed
 uint64_t CHAR_CR           =  13; // ASCII code 13 = carriage return
 uint64_t CHAR_SPACE        = ' ';
-uint64_t CHAR_SEMICOLON    = ';';
-uint64_t CHAR_PLUS         = '+';
-uint64_t CHAR_DASH         = '-';
-uint64_t CHAR_ASTERISK     = '*';
-uint64_t CHAR_SLASH        = '/';
 uint64_t CHAR_UNDERSCORE   = '_';
-uint64_t CHAR_EQUAL        = '=';
+uint64_t CHAR_SINGLEQUOTE  =  39; // ASCII code 39 = '
+uint64_t CHAR_DOUBLEQUOTE  = '"';
+uint64_t CHAR_COMMA        = ',';
+uint64_t CHAR_SEMICOLON    = ';';
 uint64_t CHAR_LPARENTHESIS = '(';
 uint64_t CHAR_RPARENTHESIS = ')';
 uint64_t CHAR_LBRACE       = '{';
 uint64_t CHAR_RBRACE       = '}';
-uint64_t CHAR_COMMA        = ',';
+uint64_t CHAR_PLUS         = '+';
+uint64_t CHAR_DASH         = '-';
+uint64_t CHAR_ASTERISK     = '*';
+uint64_t CHAR_SLASH        = '/';
+uint64_t CHAR_PERCENTAGE   = '%';
+uint64_t CHAR_EQUAL        = '=';
+uint64_t CHAR_EXCLAMATION  = '!';
 uint64_t CHAR_LT           = '<';
 uint64_t CHAR_GT           = '>';
-uint64_t CHAR_EXCLAMATION  = '!';
-uint64_t CHAR_PERCENTAGE   = '%';
-uint64_t CHAR_SINGLEQUOTE  =  39; // ASCII code 39 = '
-uint64_t CHAR_DOUBLEQUOTE  = '"';
 uint64_t CHAR_BACKSLASH    =  92; // ASCII code 92 = backslash
 
 uint64_t CPUBITWIDTH = 64;
@@ -206,13 +213,14 @@ uint64_t UINT64_MAX; // maximum numerical value of an unsigned 64-bit integer
 uint64_t MAX_FILENAME_LENGTH = 128;
 
 uint64_t* character_buffer; // buffer for reading and writing characters
-uint64_t* output_buffer;    // buffer for printing characters to console
+uint64_t* output_character_buffer;    // buffer for printing characters to console
 uint64_t* integer_buffer;   // buffer for printing integers
 uint64_t* filename_buffer;  // buffer for opening files
 uint64_t* binary_buffer;    // buffer for binary I/O
 
 // character buffer specification
-uint64_t CHAR_BUFFER_SIZE = 8;
+uint64_t* character_buffer_new;
+uint64_t CHAR_BUFFER_SIZE = 1024;
 uint64_t char_buffer_idx = 0;
 uint64_t chars_in_buffer = 0;
 
@@ -273,11 +281,14 @@ void init_library() {
   INT64_MIN = INT64_MAX + 1;
 
   // allocate and touch to make sure memory is mapped for read calls
-  character_buffer  = smalloc(1024);
+  character_buffer  = smalloc(SIZEOFUINT64);
   *character_buffer = 0;
-
-  output_buffer = smalloc(SIZEOFUINT64);
-  *output_buffer = 0;
+/*
+  character_buffer_new = smalloc(1024);
+  *character_buffer_new = 0;
+*/
+  output_character_buffer = smalloc(SIZEOFUINT64);
+  *output_character_buffer = 0;
 
   // accommodate at least CPUBITWIDTH numbers for itoa, no mapping needed
   integer_buffer = smalloc(CPUBITWIDTH + 1);
@@ -336,38 +347,44 @@ void handle_escape_sequence();
 
 // ------------------------ GLOBAL CONSTANTS -----------------------
 
-uint64_t SYM_EOF          = -1; // end of file
-uint64_t SYM_IDENTIFIER   = 0;  // identifier
-uint64_t SYM_INTEGER      = 1;  // integer
-uint64_t SYM_VOID         = 2;  // void
-uint64_t SYM_UINT64       = 3;  // uint64_t
-uint64_t SYM_SEMICOLON    = 4;  // ;
+uint64_t SYM_EOF = -1; // end of file
+
+// C* symbols
+
+uint64_t SYM_INTEGER      = 0;  // integer
+uint64_t SYM_CHARACTER    = 1;  // character
+uint64_t SYM_STRING       = 2;  // string
+uint64_t SYM_IDENTIFIER   = 3;  // identifier
+uint64_t SYM_UINT64       = 4;  // uint64_t
 uint64_t SYM_IF           = 5;  // if
 uint64_t SYM_ELSE         = 6;  // else
-uint64_t SYM_PLUS         = 7;  // +
-uint64_t SYM_MINUS        = 8;  // -
-uint64_t SYM_ASTERISK     = 9;  // *
-uint64_t SYM_DIV          = 10; // /
-uint64_t SYM_EQUALITY     = 11; // ==
-uint64_t SYM_ASSIGN       = 12; // =
-uint64_t SYM_LPARENTHESIS = 13; // (
-uint64_t SYM_RPARENTHESIS = 14; // )
-uint64_t SYM_LBRACE       = 15; // {
-uint64_t SYM_RBRACE       = 16; // }
-uint64_t SYM_WHILE        = 17; // while
-uint64_t SYM_RETURN       = 18; // return
-uint64_t SYM_COMMA        = 19; // ,
-uint64_t SYM_LT           = 20; // <
-uint64_t SYM_LEQ          = 21; // <=
-uint64_t SYM_GT           = 22; // >
-uint64_t SYM_GEQ          = 23; // >=
-uint64_t SYM_NOTEQ        = 24; // !=
-uint64_t SYM_MOD          = 25; // %
-uint64_t SYM_CHARACTER    = 26; // character
-uint64_t SYM_STRING       = 27; // string
-uint64_t SYM_INT          = 28; // int
-uint64_t SYM_ULONG        = 29; // unsigned
-uint64_t SYM_CHAR         = 30; // char
+uint64_t SYM_VOID         = 7;  // void
+uint64_t SYM_RETURN       = 8;  // return
+uint64_t SYM_WHILE        = 9;  // while
+uint64_t SYM_COMMA        = 10; // ,
+uint64_t SYM_SEMICOLON    = 11; // ;
+uint64_t SYM_LPARENTHESIS = 12; // (
+uint64_t SYM_RPARENTHESIS = 13; // )
+uint64_t SYM_LBRACE       = 14; // {
+uint64_t SYM_RBRACE       = 15; // }
+uint64_t SYM_PLUS         = 16; // +
+uint64_t SYM_MINUS        = 17; // -
+uint64_t SYM_ASTERISK     = 18; // *
+uint64_t SYM_DIV          = 19; // /
+uint64_t SYM_MOD          = 20; // %
+uint64_t SYM_ASSIGN       = 21; // =
+uint64_t SYM_EQUALITY     = 22; // ==
+uint64_t SYM_NOTEQ        = 23; // !=
+uint64_t SYM_LT           = 24; // <
+uint64_t SYM_LEQ          = 25; // <=
+uint64_t SYM_GT           = 26; // >
+uint64_t SYM_GEQ          = 27; // >=
+
+// symbols for bootstrapping
+
+uint64_t SYM_INT      = 28; // int
+uint64_t SYM_CHAR     = 29; // char
+uint64_t SYM_UNSIGNED = 30; // unsigned
 
 uint64_t* SYMBOLS; // strings representing symbols
 
@@ -403,39 +420,40 @@ uint64_t  source_fd   = 0;             // file descriptor of open source file
 // ------------------------- INITIALIZATION ------------------------
 
 void init_scanner () {
-  SYMBOLS = smalloc((SYM_CHAR + 1) * SIZEOFUINT64STAR);
+  SYMBOLS = smalloc((SYM_UNSIGNED + 1) * SIZEOFUINT64STAR);
 
-  *(SYMBOLS + SYM_IDENTIFIER)   = (uint64_t) "identifier";
   *(SYMBOLS + SYM_INTEGER)      = (uint64_t) "integer";
-  *(SYMBOLS + SYM_VOID)         = (uint64_t) "void";
+  *(SYMBOLS + SYM_CHARACTER)    = (uint64_t) "character";
+  *(SYMBOLS + SYM_STRING)       = (uint64_t) "string";
+  *(SYMBOLS + SYM_IDENTIFIER)   = (uint64_t) "identifier";
   *(SYMBOLS + SYM_UINT64)       = (uint64_t) "uint64_t";
-  *(SYMBOLS + SYM_SEMICOLON)    = (uint64_t) ";";
   *(SYMBOLS + SYM_IF)           = (uint64_t) "if";
   *(SYMBOLS + SYM_ELSE)         = (uint64_t) "else";
-  *(SYMBOLS + SYM_PLUS)         = (uint64_t) "+";
-  *(SYMBOLS + SYM_MINUS)        = (uint64_t) "-";
-  *(SYMBOLS + SYM_ASTERISK)     = (uint64_t) "*";
-  *(SYMBOLS + SYM_DIV)          = (uint64_t) "/";
-  *(SYMBOLS + SYM_EQUALITY)     = (uint64_t) "==";
-  *(SYMBOLS + SYM_ASSIGN)       = (uint64_t) "=";
+  *(SYMBOLS + SYM_VOID)         = (uint64_t) "void";
+  *(SYMBOLS + SYM_RETURN)       = (uint64_t) "return";
+  *(SYMBOLS + SYM_WHILE)        = (uint64_t) "while";
+  *(SYMBOLS + SYM_COMMA)        = (uint64_t) ",";
+  *(SYMBOLS + SYM_SEMICOLON)    = (uint64_t) ";";
   *(SYMBOLS + SYM_LPARENTHESIS) = (uint64_t) "(";
   *(SYMBOLS + SYM_RPARENTHESIS) = (uint64_t) ")";
   *(SYMBOLS + SYM_LBRACE)       = (uint64_t) "{";
   *(SYMBOLS + SYM_RBRACE)       = (uint64_t) "}";
-  *(SYMBOLS + SYM_WHILE)        = (uint64_t) "while";
-  *(SYMBOLS + SYM_RETURN)       = (uint64_t) "return";
-  *(SYMBOLS + SYM_COMMA)        = (uint64_t) ",";
+  *(SYMBOLS + SYM_PLUS)         = (uint64_t) "+";
+  *(SYMBOLS + SYM_MINUS)        = (uint64_t) "-";
+  *(SYMBOLS + SYM_ASTERISK)     = (uint64_t) "*";
+  *(SYMBOLS + SYM_DIV)          = (uint64_t) "/";
+  *(SYMBOLS + SYM_MOD)          = (uint64_t) "%";
+  *(SYMBOLS + SYM_ASSIGN)       = (uint64_t) "=";
+  *(SYMBOLS + SYM_EQUALITY)     = (uint64_t) "==";
+  *(SYMBOLS + SYM_NOTEQ)        = (uint64_t) "!=";
   *(SYMBOLS + SYM_LT)           = (uint64_t) "<";
   *(SYMBOLS + SYM_LEQ)          = (uint64_t) "<=";
   *(SYMBOLS + SYM_GT)           = (uint64_t) ">";
   *(SYMBOLS + SYM_GEQ)          = (uint64_t) ">=";
-  *(SYMBOLS + SYM_NOTEQ)        = (uint64_t) "!=";
-  *(SYMBOLS + SYM_MOD)          = (uint64_t) "%";
-  *(SYMBOLS + SYM_CHARACTER)    = (uint64_t) "character";
-  *(SYMBOLS + SYM_STRING)       = (uint64_t) "string";
-  *(SYMBOLS + SYM_INT)          = (uint64_t) "int";
-  *(SYMBOLS + SYM_ULONG)        = (uint64_t) "ulong";
-  *(SYMBOLS + SYM_CHAR)         = (uint64_t) "char";
+
+  *(SYMBOLS + SYM_INT)      = (uint64_t) "int";
+  *(SYMBOLS + SYM_CHAR)     = (uint64_t) "char";
+  *(SYMBOLS + SYM_UNSIGNED) = (uint64_t) "unsigned";
 
   character = CHAR_EOF;
   symbol    = SYM_EOF;
@@ -1519,7 +1537,7 @@ uint64_t pexcess();
 uint64_t pused();
 
 uint64_t* palloc();
-//void      pfree(uint64_t* frame);
+void      pfree(uint64_t* frame);
 
 void map_and_store(uint64_t* context, uint64_t vaddr, uint64_t data);
 
@@ -1575,6 +1593,7 @@ uint64_t EXITCODE_MULTIPLEEXCEPTIONERROR = 11;
 uint64_t EXITCODE_SYMBOLICEXECUTIONERROR = 12;
 uint64_t EXITCODE_OUTOFTRACEMEMORY       = 13;
 uint64_t EXITCODE_UNCAUGHTEXCEPTION      = 14;
+uint64_t EXITCODE_ASSERTIONERROR         = 15;
 
 uint64_t SYSCALL_BITWIDTH = 32; // integer bit width for system calls
 
@@ -1811,6 +1830,18 @@ uint64_t load_character(uint64_t* s, uint64_t i) {
   return get_bits(*(s + a), (i % SIZEOFUINT64) * 8, 8);
 }
 
+uint64_t load_character_from_buffer(uint64_t index) {
+  // assert: i >= 0
+  uint64_t a;
+
+  // a is the index of the double word where
+  // the to-be-loaded i-th character in s is
+  a = index / CHAR_BUFFER_SIZE;
+
+  // return i-th 8-bit character in s
+  return get_bits(*(character_buffer_new + a), (index % SIZEOFUINT64) * 8, 8);
+}
+
 uint64_t* store_character(uint64_t* s, uint64_t i, uint64_t c) {
   // assert: i >= 0, 0 <= c < 2^8 (all characters are 8-bit)
   uint64_t a;
@@ -1893,7 +1924,7 @@ uint64_t string_compare(uint64_t* s, uint64_t* t) {
       return 0;
 }
 
-uint64_t selfie_atoi(uint64_t* s) {
+uint64_t atoi(uint64_t* s) {
   uint64_t i;
   uint64_t n;
   uint64_t c;
@@ -2067,13 +2098,13 @@ uint64_t fixed_point_percentage(uint64_t r, uint64_t f) {
 }
 
 void put_character(uint64_t c) {
-  *output_buffer = c;
+  *output_character_buffer = c;
 
   // assert: character_buffer is mapped
 
   // try to write 1 character from character_buffer
   // into file with output_fd file descriptor
-  if ((uint64_t) write(output_fd, character_buffer, 1) == 1) {
+  if (write(output_fd, output_character_buffer, 1) == 1) {
     if (output_fd != 1)
       // count number of characters written to a file,
       // not the console which has file descriptor 1
@@ -2118,8 +2149,19 @@ void print(uint64_t* s) {
   if (s == (uint64_t*) 0)
     print((uint64_t*) "NULL");
   else {
-    put_string(s, string_length(s));
+    i = 0;
+    while (load_character(s, i) != 0) {
+      put_character(load_character(s, i));
+
+      i = i + 1;
+    }
   }
+
+  // if (s == (uint64_t*) 0)
+  //   print((uint64_t*) "NULL");
+  // else {
+  //   put_string(s, string_length(s));
+  // }
 }
 
 void println() {
@@ -2366,6 +2408,17 @@ uint64_t* zalloc(uint64_t size) {
   return memory;
 }
 
+// assertion mechanism
+void assert(uint64_t assertion, uint64_t* message){
+  if (assertion == 0){
+    print((uint64_t*) "Assertion failed:\n");
+    print((uint64_t*) message);
+    println();
+    exit(EXITCODE_ASSERTIONERROR);
+  }
+  //success
+}
+
 // *~*~ *~*~ *~*~ *~*~ *~*~ *~*~ *~*~ *~*~ *~*~ *~*~ *~*~ *~*~ *~*~
 // -----------------------------------------------------------------
 // ---------------------    C O M P I L E R    ---------------------
@@ -2413,6 +2466,30 @@ void syntax_error_identifier(uint64_t* expected) {
 }
 
 void get_character() {
+  uint64_t number_of_read_bytes;
+
+  // assert: character_buffer is mapped
+
+  // try to read 1 character into character_buffer
+  // from file with source_fd file descriptor
+  number_of_read_bytes = read(source_fd, character_buffer, 1);
+
+  if (number_of_read_bytes == 1) {
+    // store the read character in the global variable called character
+    character = *character_buffer;
+
+    number_of_read_characters = number_of_read_characters + 1;
+  } else if (number_of_read_bytes == 0)
+    // reached end of file
+    character = CHAR_EOF;
+  else {
+    printf2((uint64_t*) "%s: could not read character from input file %s\n", selfie_name, source_name);
+
+    exit(EXITCODE_IOERROR);
+  }
+}
+
+void get_character_new() {
   // assert: character_buffer is mapped
   if (chars_in_buffer == 0) {
     fill_character_buffer();
@@ -2425,7 +2502,7 @@ void get_character() {
     character = CHAR_EOF;
   } else if (char_buffer_idx < chars_in_buffer) {
     // store the read character in the global variable called character
-    character = load_character(character_buffer, char_buffer_idx);
+    character = load_character(character_buffer_new, char_buffer_idx);
     char_buffer_idx = char_buffer_idx + 1;
 
     number_of_read_characters = number_of_read_characters + 1;
@@ -2438,7 +2515,7 @@ void get_character() {
 
 void fill_character_buffer() {
   // fills or refills our char buffer
-  chars_in_buffer = read(source_fd, character_buffer, 1024);
+  chars_in_buffer = read(source_fd, character_buffer, CHAR_BUFFER_SIZE);
   char_buffer_idx = 0;
 }
 
@@ -2613,23 +2690,26 @@ uint64_t identifier_string_match(uint64_t keyword) {
 }
 
 uint64_t identifier_or_keyword() {
-  if (identifier_string_match(SYM_WHILE))
-    return SYM_WHILE;
-  if (identifier_string_match(SYM_IF))
-    return SYM_IF;
   if (identifier_string_match(SYM_UINT64))
     return SYM_UINT64;
-  if (identifier_string_match(SYM_ELSE))
+  else if (identifier_string_match(SYM_IF))
+    return SYM_IF;
+  else if (identifier_string_match(SYM_ELSE))
     return SYM_ELSE;
-  if (identifier_string_match(SYM_RETURN))
-    return SYM_RETURN;
-  if (identifier_string_match(SYM_VOID))
+  else if (identifier_string_match(SYM_VOID))
     return SYM_VOID;
-  if (identifier_string_match(SYM_INT))
+  else if (identifier_string_match(SYM_RETURN))
+    return SYM_RETURN;
+  else if (identifier_string_match(SYM_WHILE))
+    return SYM_WHILE;
+  else if (identifier_string_match(SYM_INT))
+    // selfie bootstraps int to uint64_t!
     return SYM_UINT64;
-  if (identifier_string_match(SYM_ULONG))
+  else if (identifier_string_match(SYM_CHAR))
+    // selfie bootstraps char to uint64_t!
     return SYM_UINT64;
-  if (identifier_string_match(SYM_CHAR))
+  else if (identifier_string_match(SYM_UNSIGNED))
+    // selfie bootstraps unsigned to uint64_t!
     return SYM_UINT64;
   else
     return SYM_IDENTIFIER;
@@ -2669,16 +2749,6 @@ void get_symbol() {
 
         symbol = identifier_or_keyword();
 
-        // char * hack:
-        if (identifier_string_match(SYM_CHAR)){
-          get_symbol();
-          if (symbol == SYM_ASTERISK){
-            symbol = SYM_UINT64;
-          } else {
-            syntax_error_message((uint64_t*) "char was not followed by *.");
-          }
-        }
-
       } else if (is_character_digit()) {
         // accommodate integer and null for termination
         integer = smalloc(MAX_INTEGER_LENGTH + 1);
@@ -2704,7 +2774,7 @@ void get_symbol() {
 
         store_character(integer, i, 0); // null-terminated string
 
-        literal = selfie_atoi(integer);
+        literal = atoi(integer);
 
         if (integer_is_signed)
           if (literal > INT64_MIN) {
@@ -2779,35 +2849,15 @@ void get_symbol() {
 
         symbol = SYM_STRING;
 
+      } else if (character == CHAR_COMMA) {
+        get_character();
+
+        symbol = SYM_COMMA;
+
       } else if (character == CHAR_SEMICOLON) {
         get_character();
 
         symbol = SYM_SEMICOLON;
-
-      } else if (character == CHAR_PLUS) {
-        get_character();
-
-        symbol = SYM_PLUS;
-
-      } else if (character == CHAR_DASH) {
-        get_character();
-
-        symbol = SYM_MINUS;
-
-      } else if (character == CHAR_ASTERISK) {
-        get_character();
-
-        symbol = SYM_ASTERISK;
-
-      } else if (character == CHAR_EQUAL) {
-        get_character();
-
-        if (character == CHAR_EQUAL) {
-          get_character();
-
-          symbol = SYM_EQUALITY;
-        } else
-          symbol = SYM_ASSIGN;
 
       } else if (character == CHAR_LPARENTHESIS) {
         get_character();
@@ -2829,10 +2879,45 @@ void get_symbol() {
 
         symbol = SYM_RBRACE;
 
-      } else if (character == CHAR_COMMA) {
+      } else if (character == CHAR_PLUS) {
         get_character();
 
-        symbol = SYM_COMMA;
+        symbol = SYM_PLUS;
+
+      } else if (character == CHAR_DASH) {
+        get_character();
+
+        symbol = SYM_MINUS;
+
+      } else if (character == CHAR_ASTERISK) {
+        get_character();
+
+        symbol = SYM_ASTERISK;
+
+      } else if (character == CHAR_PERCENTAGE) {
+        get_character();
+
+        symbol = SYM_MOD;
+
+      } else if (character == CHAR_EQUAL) {
+        get_character();
+
+        if (character == CHAR_EQUAL) {
+          get_character();
+
+          symbol = SYM_EQUALITY;
+        } else
+          symbol = SYM_ASSIGN;
+
+      } else if (character == CHAR_EXCLAMATION) {
+        get_character();
+
+        if (character == CHAR_EQUAL)
+          get_character();
+        else
+          syntax_error_character(CHAR_EQUAL);
+
+        symbol = SYM_NOTEQ;
 
       } else if (character == CHAR_LT) {
         get_character();
@@ -2853,21 +2938,6 @@ void get_symbol() {
           symbol = SYM_GEQ;
         } else
           symbol = SYM_GT;
-
-      } else if (character == CHAR_EXCLAMATION) {
-        get_character();
-
-        if (character == CHAR_EQUAL)
-          get_character();
-        else
-          syntax_error_character(CHAR_EQUAL);
-
-        symbol = SYM_NOTEQ;
-
-      } else if (character == CHAR_PERCENTAGE) {
-        get_character();
-
-        symbol = SYM_MOD;
 
       } else {
         print_line_number((uint64_t*) "syntax error", line_number);
@@ -4311,7 +4381,8 @@ uint64_t compile_type() {
   if (symbol == SYM_UINT64) {
     get_symbol();
 
-    if (symbol == SYM_ASTERISK) {
+    while (symbol == SYM_ASTERISK) {
+      // we tolerate pointer to pointers for bootstrapping
       type = UINT64STAR_T;
 
       get_symbol();
@@ -4853,7 +4924,7 @@ void selfie_compile() {
 
       // assert: source_name is mapped and not longer than MAX_FILENAME_LENGTH
 
-      source_fd = sign_extend(open(source_name, O_RDONLY, (char*) 0), SYSCALL_BITWIDTH);
+      source_fd = sign_extend(open(source_name, O_RDONLY, 0), SYSCALL_BITWIDTH);
 
       if (signed_less_than(source_fd, 0)) {
         printf2((uint64_t*) "%s: could not open input file %s\n", selfie_name, source_name);
@@ -5617,15 +5688,15 @@ uint64_t open_write_only(uint64_t* name) {
   uint64_t fd;
 
   // try Mac flags
-  fd = sign_extend(open(name, MAC_O_CREAT_TRUNC_WRONLY, (char*) S_IRUSR_IWUSR_IRGRP_IROTH), SYSCALL_BITWIDTH);
+  fd = sign_extend(open(name, MAC_O_CREAT_TRUNC_WRONLY,  S_IRUSR_IWUSR_IRGRP_IROTH), SYSCALL_BITWIDTH);
 
   if (signed_less_than(fd, 0)) {
     // try Linux flags
-    fd = sign_extend(open(name, LINUX_O_CREAT_TRUNC_WRONLY, (char*) S_IRUSR_IWUSR_IRGRP_IROTH), SYSCALL_BITWIDTH);
+    fd = sign_extend(open(name, LINUX_O_CREAT_TRUNC_WRONLY,  S_IRUSR_IWUSR_IRGRP_IROTH), SYSCALL_BITWIDTH);
 
     if (signed_less_than(fd, 0))
       // try Windows flags
-      fd = sign_extend(open(name, WINDOWS_O_BINARY_CREAT_TRUNC_WRONLY, (char*) S_IRUSR_IWUSR_IRGRP_IROTH), SYSCALL_BITWIDTH);
+      fd = sign_extend(open(name, WINDOWS_O_BINARY_CREAT_TRUNC_WRONLY,  S_IRUSR_IWUSR_IRGRP_IROTH), SYSCALL_BITWIDTH);
   }
 
   return fd;
@@ -5655,7 +5726,7 @@ void selfie_output() {
   // assert: ELF_header is mapped
 
   // first write ELF header
-  if ((uint64_t) write(fd, ELF_header, ELF_HEADER_LEN) != ELF_HEADER_LEN) {
+  if (write(fd, ELF_header, ELF_HEADER_LEN) != ELF_HEADER_LEN) {
     printf2((uint64_t*) "%s: could not write ELF header of binary output file %s\n", selfie_name, binary_name);
 
     exit(EXITCODE_IOERROR);
@@ -5664,7 +5735,7 @@ void selfie_output() {
   // then write code length
   *binary_buffer = code_length;
 
-  if ((uint64_t) write(fd, binary_buffer, SIZEOFUINT64) != SIZEOFUINT64) {
+  if (write(fd, binary_buffer, SIZEOFUINT64) != SIZEOFUINT64) {
     printf2((uint64_t*) "%s: could not write code length of binary output file %s\n", selfie_name, binary_name);
 
     exit(EXITCODE_IOERROR);
@@ -5673,7 +5744,7 @@ void selfie_output() {
   // assert: binary is mapped
 
   // then write binary
-  if ((uint64_t) write(fd, binary, binary_length) != binary_length) {
+  if (write(fd, binary, binary_length) != binary_length) {
     printf2((uint64_t*) "%s: could not write binary into binary output file %s\n", selfie_name, binary_name);
 
     exit(EXITCODE_IOERROR);
@@ -5727,7 +5798,7 @@ void selfie_load() {
 
   // assert: binary_name is mapped and not longer than MAX_FILENAME_LENGTH
 
-  fd = sign_extend(open(binary_name, O_RDONLY, (char*) 0), SYSCALL_BITWIDTH);
+  fd = sign_extend(open(binary_name, O_RDONLY, 0), SYSCALL_BITWIDTH);
 
   if (signed_less_than(fd, 0)) {
     printf2((uint64_t*) "%s: could not open input file %s\n", selfie_name, binary_name);
@@ -6064,10 +6135,10 @@ void implement_write(uint64_t* context) {
         if (symbolic)
           // TODO: What should symbolically executed code output?
           // buffer points to a trace counter that refers to the actual value
-          // actually_written = sign_extend((uint64_t) write(fd, values + load_physical_memory(buffer), bytes_to_write), SYSCALL_BITWIDTH);
+          // actually_written = sign_extend(write(fd, values + load_physical_memory(buffer), bytes_to_write), SYSCALL_BITWIDTH);
           actually_written = bytes_to_write;
         else
-          actually_written = sign_extend((uint64_t) write(fd, buffer, bytes_to_write), SYSCALL_BITWIDTH);
+          actually_written = sign_extend(write(fd, buffer, bytes_to_write), SYSCALL_BITWIDTH);
 
         if (actually_written == bytes_to_write) {
           written_total = written_total + actually_written;
@@ -6217,7 +6288,7 @@ void implement_open(uint64_t* context) {
   mode      = *(get_regs(context) + REG_A2);
 
   if (down_load_string(get_pt(context), vfilename, filename_buffer)) {
-    fd = sign_extend(open(filename_buffer, flags, (char*) mode), SYSCALL_BITWIDTH);
+    fd = sign_extend(open(filename_buffer, flags,  mode), SYSCALL_BITWIDTH);
 
     *(get_regs(context) + REG_A0) = fd;
 
@@ -9104,12 +9175,12 @@ uint64_t* palloc() {
   return touch((uint64_t*) frame, PAGESIZE);
 }
 
-/*
+
 void pfree(uint64_t* frame) {
   // TODO: implement free list of page frames
-  frame = (uint64_t*) 0;
+  frame = frame + 1;
 }
-*/
+
 
 void map_and_store(uint64_t* context, uint64_t vaddr, uint64_t data) {
   // assert: is_valid_virtual_address(vaddr) == 1
@@ -9411,8 +9482,7 @@ uint64_t hypster(uint64_t* to_context) {
 uint64_t mixter(uint64_t* to_context, uint64_t mix) {
   // works with mipsters and hypsters
   uint64_t mslice;
-  // timeout is currently unused, commented out to avoid compiler warning
-  //uint64_t timeout;
+  uint64_t timeout;
   uint64_t* from_context;
 
   printf2((uint64_t*) "mixter (%d%% mipster/%d%% hypster)\n", (uint64_t*) mix, (uint64_t*) (100 - mix));
@@ -9429,11 +9499,11 @@ uint64_t mixter(uint64_t* to_context, uint64_t mix) {
   if (mslice > 0) {
     mix = 1;
 
-    // timeout = mslice;
+    timeout = mslice;
   } else {
     mix = 0;
 
-    // timeout = TIMESLICE;
+    timeout = TIMESLICE;
   }
 
   while (1) {
@@ -9446,7 +9516,7 @@ uint64_t mixter(uint64_t* to_context, uint64_t mix) {
       // switch to parent which is in charge of handling exceptions
       to_context = get_parent(from_context);
 
-      // timeout = TIMEROFF;
+      timeout = TIMEROFF;
     } else if (handle_exception(from_context) == EXIT)
       return get_exit_code(from_context);
     else {
@@ -9457,23 +9527,22 @@ uint64_t mixter(uint64_t* to_context, uint64_t mix) {
         if (mslice != TIMESLICE) {
           mix = 0;
 
-          // timeout = TIMESLICE - mslice;
+          timeout = TIMESLICE - mslice;
         }
       } else if (mslice > 0) {
         mix = 1;
 
-        // timeout = mslice;
+        timeout = mslice;
       }
     }
   }
 }
 
 uint64_t minmob(uint64_t* to_context) {
-  // timeout is currently unused, commented out to avoid compiler warning
-  // uint64_t timeout;
+  uint64_t timeout;
   uint64_t* from_context;
 
-  // timeout = TIMESLICE;
+  timeout = TIMESLICE;
 
   while (1) {
     from_context = mipster_switch(to_context, TIMESLICE);
@@ -9482,7 +9551,7 @@ uint64_t minmob(uint64_t* to_context) {
       // switch to parent which is in charge of handling exceptions
       to_context = get_parent(from_context);
 
-      // timeout = TIMEROFF;
+      timeout = TIMEROFF;
     } else {
       // minster and mobster do not handle page faults
       if (get_exception(from_context) == EXCEPTION_PAGEFAULT) {
@@ -9497,7 +9566,7 @@ uint64_t minmob(uint64_t* to_context) {
       // TODO: scheduler should go here
       to_context = from_context;
 
-      // timeout = TIMESLICE;
+      timeout = TIMESLICE;
     }
   }
 }
@@ -9665,9 +9734,9 @@ uint64_t selfie_run(uint64_t machine) {
   if (machine == MONSTER) {
     init_memory(round_up(MAX_TRACE_LENGTH * SIZEOFUINT64, MEGABYTE) / MEGABYTE + 1);
 
-    fuzz = selfie_atoi(peek_argument());
+    fuzz = atoi(peek_argument());
   } else
-    init_memory(selfie_atoi(peek_argument()));
+    init_memory(atoi(peek_argument()));
 
   execute = 1;
 
@@ -9979,7 +10048,7 @@ void selfie_load_dimacs() {
 
   // assert: source_name is mapped and not longer than MAX_FILENAME_LENGTH
 
-  source_fd = sign_extend(open(source_name, O_RDONLY, (char*) 0), SYSCALL_BITWIDTH);
+  source_fd = sign_extend(open(source_name, O_RDONLY, 0), SYSCALL_BITWIDTH);
 
   if (signed_less_than(source_fd, 0)) {
     printf2((uint64_t*) "%s: could not open input file %s\n", selfie_name, source_name);
@@ -10143,7 +10212,8 @@ uint64_t selfie() {
   return EXITCODE_NOERROR;
 }
 
-int main(uint64_t argc, uint64_t* argv) {
+// selfie bootstraps int and char** to uint64_t and uint64_t*, respectively!
+int main(int argc, char** argv) {
   init_selfie((uint64_t) argc, (uint64_t*) argv);
 
   init_library();
